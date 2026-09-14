@@ -6,7 +6,9 @@ Streamlit aplikace pro správu rezervací ubytování.
 
 Aplikace má dvě stránky v horním menu:
 
-- **Kalendář** — barevný přehled obsazenosti + formulář pro novou rezervaci
+- **Kalendář** — barevný přehled obsazenosti na 12 měsíců dopředu.
+  Termín se vybírá kliknutím: první klik určí den příjezdu, druhý den
+  odjezdu. Pak se objeví formulář na jméno, příjmení a e-mail.
 - **Rezervace** — seznam záznamů, potvrzování a mazání, export do CSV/Excelu
 
 ### Půlené dny
@@ -32,6 +34,11 @@ termíny, které se skutečně přesahují.
 | 🟩 zelená | volno |
 | 🟧 oranžová | rezervováno, čeká na potvrzení |
 | 🟥 červená | potvrzeno |
+| ⬜ šedá | den už byl, nejde vybrat |
+
+Plně obsazené dny nejdou kliknout. Dny, kde je volná jen jedna půlka,
+kliknout jdou — takový den totiž může posloužit jako odjezd jednoho
+hosta a zároveň příjezd dalšího.
 
 ## Struktura souborů
 

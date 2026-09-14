@@ -1,18 +1,25 @@
-"""Vykreslení kalendáře jako HTML.
+"""Klikací kalendář obsazenosti.
 
-Každý den je čtvereček rozdělený úhlopříčkou na dvě poloviny:
+Každý den je tlačítko rozdělené úhlopříčkou na dvě poloviny:
 
     levý horní trojúhelník  = dopoledne (do 11:00, kdy se odjíždí)
     pravý dolní trojúhelník = odpoledne (od 15:00, kdy se přijíždí)
 
-Rezervace od soboty do středy tak obarví jen odpolední půlku soboty,
-celé neděle až úterý, a jen dopolední půlku středy. Pokud někdo další
-začne pobyt tou samou středou, obarví se její druhá (odpolední) půlka —
-a ve čtverečku jsou vidět dvě různé barvy.
+Pobyt od soboty do středy obarví jen odpolední půlku soboty, celé
+neděle až úterý a jen dopolední půlku středy. Když další host začne
+pobyt tou samou středou, obarví se její druhá půlka a ve čtverečku
+jsou vidět dvě barvy.
+
+Barvy se tlačítkům přiřazují přes CSS. Streamlit dává každému widgetu
+s `key` CSS třídu `st-key-<key>`, takže do klíče zakódujeme stav obou
+polovin dne a stav výběru — devět kombinací barev pak stačí popsat
+devíti pravidly místo jednoho pravidla pro každý den v roce.
 """
 
 import calendar
 from datetime import date
+
+import streamlit as st
 
 from storage import STATUS_CONFIRMED, STATUS_PENDING
 
@@ -23,204 +30,298 @@ MONTH_NAMES = [
 
 WEEKDAY_NAMES = ["Po", "Út", "St", "Čt", "Pá", "So", "Ne"]
 
+FREE = "free"
+PAST = "past"   # den, který už byl — nejde ho vybrat
+
 COLORS = {
-    "free": "#4ade80",
+    FREE: "#4ade80",
     STATUS_PENDING: "#fb923c",
     STATUS_CONFIRMED: "#ef4444",
+    PAST: "#94a3b8",
 }
 
-CSS = """
+# Stav výběru zakódovaný v klíči tlačítka.
+PICK_NONE = "sel0"      # mimo výběr
+PICK_EDGE = "sel1"      # den příjezdu nebo odjezdu
+PICK_INSIDE = "sel2"    # den uvnitř vybraného rozsahu
+
+STATES = [FREE, STATUS_PENDING, STATUS_CONFIRMED]
+
+
+def _day_css(today):
+    """Vygeneruje CSS pro všechny kombinace barev půlených dnů."""
+    rules = [
+        """
+        [class*="st-key-day-"] button {
+            width: 100%;
+            aspect-ratio: 1 / 1;
+            min-height: 0 !important;
+            padding: 0 !important;
+            border-radius: 6px;
+            border: 1px solid rgba(128, 128, 128, .35) !important;
+            font-size: .8rem !important;
+            font-weight: 700 !important;
+            color: #111 !important;
+            text-shadow:
+                0 0 3px rgba(255, 255, 255, .95),
+                0 0 3px rgba(255, 255, 255, .95);
+            transition: transform .08s ease;
+        }
+        [class*="st-key-day-"] button:hover:not(:disabled) {
+            transform: scale(1.08);
+            border-color: #2563eb !important;
+            z-index: 2;
+        }
+        [class*="st-key-day-"] button:disabled {
+            opacity: 1 !important;
+            cursor: not-allowed;
+        }
+        [class*="st-key-day-"] {
+            margin-bottom: -.55rem;
+        }
+        [class*="st-key-empty-"] {
+            aspect-ratio: 1 / 1;
+        }
+        """
+    ]
+
+    # Devět kombinací dopoledne × odpoledne.
+    for morning in STATES:
+        for afternoon in STATES:
+            rules.append(
+                f'[class*="-{morning}-{afternoon}-"] button {{'
+                f"background: linear-gradient(135deg,"
+                f" {COLORS[morning]} 0 50%,"
+                f" {COLORS[afternoon]} 50% 100%) !important;"
+                f"}}"
+            )
+
+    # Minulé dny jsou tlumené, ať je na první pohled vidět,
+    # že se na ně nedá kliknout.
+    rules.append(
+        f'[class*="-{PAST}-{PAST}-"] button {{'
+        f"background: {COLORS[PAST]} !important;"
+        "opacity: .4 !important;"
+        "}"
+    )
+
+    # Dnešek má čárkovaný rámeček, aby se nepletl s plným
+    # rámečkem vybraného termínu.
+    rules.append(
+        f'[class*="st-key-day-{today.isoformat()}-"] button {{'
+        "border: 2px dashed #1e293b !important;"
+        "}"
+    )
+
+    # Zvýraznění vybraného termínu.
+    rules.append(
+        f'[class*="-{PICK_EDGE}"] button {{'
+        "outline: 3px solid #2563eb !important;"
+        "outline-offset: -3px;"
+        "box-shadow: 0 0 0 2px rgba(37, 99, 235, .35) !important;"
+        "}"
+    )
+    rules.append(
+        f'[class*="-{PICK_INSIDE}"] button {{'
+        "outline: 2px solid #60a5fa !important;"
+        "outline-offset: -2px;"
+        "}"
+    )
+
+    return "<style>" + "".join(rules) + "</style>"
+
+
+LEGEND_CSS = """
 <style>
-.cal-wrap {
-    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
-    margin-bottom: 1.5rem;
-}
-.cal-title {
-    font-size: 1.05rem;
-    font-weight: 600;
-    text-align: center;
-    margin: 0 0 .6rem 0;
-}
-.cal-grid {
-    display: grid;
-    grid-template-columns: repeat(7, 1fr);
-    gap: 4px;
-}
-.cal-head {
-    text-align: center;
-    font-size: .72rem;
-    font-weight: 600;
-    opacity: .65;
-    padding-bottom: 2px;
-}
-.cal-day {
-    position: relative;
-    aspect-ratio: 1 / 1;
-    border-radius: 6px;
-    overflow: hidden;
-    border: 1px solid rgba(128, 128, 128, .35);
-}
-.cal-day.empty {
-    border: none;
-    background: none;
-}
-.cal-day.today {
-    border: 2px solid #2563eb;
-}
-.cal-half {
-    position: absolute;
-    inset: 0;
-}
-.cal-half.morning {
-    clip-path: polygon(0 0, 100% 0, 0 100%);
-}
-.cal-half.afternoon {
-    clip-path: polygon(100% 0, 100% 100%, 0 100%);
-}
-.cal-num {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: .82rem;
-    font-weight: 700;
-    color: #111;
-    text-shadow:
-        0 0 3px rgba(255, 255, 255, .95),
-        0 0 3px rgba(255, 255, 255, .95);
-}
 .cal-legend {
     display: flex;
     flex-wrap: wrap;
-    gap: 1rem;
+    gap: 1.1rem;
     align-items: center;
-    font-size: .82rem;
-    margin-bottom: 1rem;
+    font-size: .84rem;
+    margin: .2rem 0 .8rem 0;
 }
-.cal-legend-item {
-    display: flex;
-    align-items: center;
-    gap: .4rem;
-}
+.cal-legend-item { display: flex; align-items: center; gap: .4rem; }
 .cal-swatch {
-    width: 16px;
-    height: 16px;
-    border-radius: 4px;
+    width: 18px; height: 18px; border-radius: 5px;
     border: 1px solid rgba(128, 128, 128, .35);
 }
-.cal-months {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-    gap: 1.2rem;
+.cal-month-title {
+    font-size: 1rem; font-weight: 600;
+    margin: .5rem 0 .35rem 0; text-align: center;
+}
+.cal-weekdays {
+    display: grid; grid-template-columns: repeat(7, 1fr);
+    gap: 0; text-align: center;
+    font-size: .7rem; font-weight: 600; opacity: .6;
+    margin-bottom: .25rem;
 }
 </style>
 """
 
 
 def half_states(day, reservations):
-    """Zjistí stav obou polovin jednoho dne.
-
-    Vrací dvojici (dopoledne, odpoledne), kde každá položka je buď None
-    (volno), nebo ta rezervace, která danou půlku dne obsazuje.
-    """
+    """Vrátí dvojici (dopoledne, odpoledne) — rezervace, nebo None když volno."""
     morning = None
     afternoon = None
 
     for res in reservations:
-        # Dopoledne je obsazené v každý den pobytu kromě dne příjezdu —
-        # ráno dne příjezdu je chalupa ještě volná, host dorazí až v 15:00.
+        # Ráno dne příjezdu je ještě volno, host dorazí až v 15:00.
         if res["date_from"] < day <= res["date_to"]:
             morning = res
 
-        # Odpoledne je obsazené v každý den pobytu kromě dne odjezdu —
-        # ten den host v 11:00 odjíždí a odpoledne už je volno.
+        # Odpoledne dne odjezdu je už volno, host odjel v 11:00.
         if res["date_from"] <= day < res["date_to"]:
             afternoon = res
 
     return morning, afternoon
 
 
-def _half_html(css_class, res):
-    color = COLORS["free"] if res is None else COLORS[res["status"]]
-    return f'<div class="cal-half {css_class}" style="background:{color}"></div>'
+def _state_name(res):
+    return FREE if res is None else res["status"]
 
 
-def _tooltip(day, morning, afternoon):
+def _pick_state(day, sel_from, sel_to):
+    if sel_from is None:
+        return PICK_NONE
+
+    if day == sel_from or day == sel_to:
+        return PICK_EDGE
+
+    if sel_to is not None and sel_from < day < sel_to:
+        return PICK_INSIDE
+
+    return PICK_NONE
+
+
+def _tooltip(day, morning, afternoon, disabled):
     labels = {
         STATUS_PENDING: "čeká na potvrzení",
         STATUS_CONFIRMED: "potvrzeno",
     }
+
     parts = [day.strftime("%d.%m.%Y")]
 
     if morning is not None:
         parts.append(
-            f"do 11:00 — {morning['first_name']} {morning['last_name']}"
-            f" ({labels[morning['status']]})"
+            f"do 11:00 obsazeno — {morning['first_name']} "
+            f"{morning['last_name']} ({labels[morning['status']]})"
         )
+    else:
+        parts.append("do 11:00 volno")
 
     if afternoon is not None:
         parts.append(
-            f"od 15:00 — {afternoon['first_name']} {afternoon['last_name']}"
-            f" ({labels[afternoon['status']]})"
+            f"od 15:00 obsazeno — {afternoon['first_name']} "
+            f"{afternoon['last_name']} ({labels[afternoon['status']]})"
         )
+    else:
+        parts.append("od 15:00 volno")
 
-    if morning is None and afternoon is None:
-        parts.append("volno")
+    if disabled:
+        parts.append("nelze vybrat")
 
-    return " | ".join(parts)
+    return "\n".join(parts)
 
 
-def render_month(year, month, reservations, today=None):
-    """Vrátí HTML jednoho měsíce."""
-    if today is None:
-        today = date.today()
+def month_range(start, count):
+    """Vrátí seznam (rok, měsíc) — `count` měsíců počínaje měsícem `start`."""
+    base = start.year * 12 + (start.month - 1)
+    return [((base + i) // 12, (base + i) % 12 + 1) for i in range(count)]
+
+
+def render_month(year, month, reservations, sel_from, sel_to, today):
+    """Vykreslí jeden měsíc. Vrátí datum, na které uživatel klikl, jinak None."""
+    st.html(f'<div class="cal-month-title">{MONTH_NAMES[month - 1]} {year}</div>')
+    st.html(
+        '<div class="cal-weekdays">'
+        + "".join(f"<div>{name}</div>" for name in WEEKDAY_NAMES)
+        + "</div>"
+    )
 
     first_weekday, days_in_month = calendar.monthrange(year, month)
 
-    cells = []
+    clicked = None
+    day_number = 1
 
-    for name in WEEKDAY_NAMES:
-        cells.append(f'<div class="cal-head">{name}</div>')
+    # Kalendář kreslíme po týdnech, aby dny seděly pod správnými
+    # názvy dnů i v měsíci, který nezačíná v pondělí.
+    while day_number <= days_in_month:
+        cols = st.columns(7, gap="small")
 
-    for _ in range(first_weekday):
-        cells.append('<div class="cal-day empty"></div>')
+        for weekday in range(7):
+            is_lead_gap = day_number == 1 and weekday < first_weekday
 
-    for day_number in range(1, days_in_month + 1):
-        day = date(year, month, day_number)
-        morning, afternoon = half_states(day, reservations)
+            if is_lead_gap or day_number > days_in_month:
+                with cols[weekday]:
+                    st.html(
+                        f'<div class="cal-empty" '
+                        f'style="aspect-ratio:1/1"></div>'
+                    )
+                continue
 
-        classes = "cal-day today" if day == today else "cal-day"
+            day = date(year, month, day_number)
+            morning, afternoon = half_states(day, reservations)
 
-        cells.append(
-            f'<div class="{classes}" title="{_tooltip(day, morning, afternoon)}">'
-            f'{_half_html("morning", morning)}'
-            f'{_half_html("afternoon", afternoon)}'
-            f'<div class="cal-num">{day_number}</div>'
-            f"</div>"
-        )
+            # Plně obsazený den nejde použít jako příjezd ani jako odjezd.
+            fully_booked = morning is not None and afternoon is not None
+            disabled = fully_booked or day < today
 
-    return (
-        '<div class="cal-wrap">'
-        f'<div class="cal-title">{MONTH_NAMES[month - 1]} {year}</div>'
-        f'<div class="cal-grid">{"".join(cells)}</div>'
-        "</div>"
-    )
+            # Minulý den bez rezervace vykreslíme šedě. Minulý den
+            # s rezervací si barvy nechá, ať je vidět historie pobytů.
+            if day < today and morning is None and afternoon is None:
+                morning_name = afternoon_name = PAST
+            else:
+                morning_name = _state_name(morning)
+                afternoon_name = _state_name(afternoon)
+
+            key = (
+                f"day-{day.isoformat()}"
+                f"-{morning_name}-{afternoon_name}-"
+                f"{_pick_state(day, sel_from, sel_to)}"
+            )
+
+            with cols[weekday]:
+                if st.button(
+                    str(day_number),
+                    key=key,
+                    help=_tooltip(day, morning, afternoon, disabled),
+                    disabled=disabled,
+                    width="stretch",
+                ):
+                    clicked = day
+
+            day_number += 1
+
+    return clicked
 
 
-def render_months(months, reservations, today=None):
-    """Vrátí HTML několika měsíců vedle sebe. `months` je seznam (rok, měsíc)."""
-    blocks = [
-        render_month(year, month, reservations, today)
-        for year, month in months
-    ]
-    return CSS + f'<div class="cal-months">{"".join(blocks)}</div>'
+def render_calendar(months, reservations, sel_from, sel_to, today, columns=3):
+    """Vykreslí mřížku měsíců. Vrátí datum, na které uživatel klikl."""
+    st.html(_day_css(today))
+
+    clicked = None
+
+    for row_start in range(0, len(months), columns):
+        row = months[row_start:row_start + columns]
+        cols = st.columns(columns, gap="medium")
+
+        for index, (year, month) in enumerate(row):
+            with cols[index]:
+                result = render_month(
+                    year, month, reservations, sel_from, sel_to, today
+                )
+
+                if result is not None:
+                    clicked = result
+
+    return clicked
 
 
 def render_legend():
     items = [
-        (COLORS["free"], "Volno"),
-        (COLORS[STATUS_PENDING], "Rezervováno, čeká na potvrzení"),
+        (COLORS[FREE], "Volno"),
+        (COLORS[STATUS_PENDING], "Čeká na potvrzení"),
         (COLORS[STATUS_CONFIRMED], "Potvrzeno"),
     ]
 
@@ -231,4 +332,10 @@ def render_legend():
         for color, label in items
     )
 
-    return CSS + f'<div class="cal-legend">{html}</div>'
+    html += (
+        '<div class="cal-legend-item" style="opacity:.7">'
+        "<span>◤ dopoledne do 11:00 &nbsp;·&nbsp; ◢ odpoledne od 15:00</span>"
+        "</div>"
+    )
+
+    return LEGEND_CSS + f'<div class="cal-legend">{html}</div>'

@@ -1,57 +1,135 @@
-"""Stránka Kalendář — přehled obsazenosti a formulář pro novou rezervaci."""
+"""Stránka Kalendář — klikací přehled obsazenosti a formulář rezervace.
 
-from datetime import date, timedelta
+Termín se vybírá kliknutím do kalendáře: první klik určí den příjezdu,
+druhý den odjezdu. Další klik začne výběr znovu.
+"""
+
+from datetime import date
 
 import streamlit as st
 
 import storage
-from calendar_view import render_legend, render_months
+from calendar_view import month_range, render_calendar, render_legend
 from ui import set_flash, show_flash
 
-
-def _shift_month(year, month, offset):
-    total = year * 12 + (month - 1) + offset
-    return total // 12, total % 12 + 1
+MONTHS_AHEAD = 12
 
 
-def _month_list(start_year, start_month, count):
-    return [_shift_month(start_year, start_month, i) for i in range(count)]
+def _nights_label(nights):
+    if nights == 1:
+        return "1 noc"
+
+    if nights < 5:
+        return f"{nights} noci"
+
+    return f"{nights} nocí"
+
+
+def _clear_selection():
+    st.session_state.sel_from = None
+    st.session_state.sel_to = None
+
+
+def _handle_click(day, reservations):
+    """Zpracuje kliknutí na den v kalendáři."""
+    sel_from = st.session_state.sel_from
+    sel_to = st.session_state.sel_to
+
+    # Kompletní výběr nebo klik před začátek = začínáme znovu.
+    if sel_from is None or sel_to is not None or day <= sel_from:
+        st.session_state.sel_from = day
+        st.session_state.sel_to = None
+        return
+
+    conflict = storage.find_conflict(sel_from, day, reservations)
+
+    if conflict is not None:
+        set_flash(
+            "error",
+            f"V tomhle rozsahu je už rezervace "
+            f"{conflict['first_name']} {conflict['last_name']} "
+            f"({conflict['date_from'].strftime('%d.%m.%Y')} – "
+            f"{conflict['date_to'].strftime('%d.%m.%Y')}). "
+            "Vyber kratší pobyt nebo jiný termín.",
+        )
+        st.session_state.sel_from = day
+        st.session_state.sel_to = None
+        return
+
+    st.session_state.sel_to = day
+
+
+def _selection_bar():
+    """Pruh nad kalendářem s aktuálně vybraným termínem."""
+    sel_from = st.session_state.sel_from
+    sel_to = st.session_state.sel_to
+
+    col_text, col_clear = st.columns([4, 1])
+
+    with col_text:
+        if sel_from is None:
+            st.info(
+                "Klikni v kalendáři na den **příjezdu**. "
+                "Druhým kliknutím vybereš den **odjezdu**.",
+                icon="👉",
+            )
+        elif sel_to is None:
+            st.warning(
+                f"Příjezd **{sel_from.strftime('%d.%m.%Y')}** od 15:00. "
+                "Teď klikni na den odjezdu.",
+                icon="📅",
+            )
+        else:
+            nights = (sel_to - sel_from).days
+            st.success(
+                f"**{sel_from.strftime('%d.%m.%Y')}** od 15:00 → "
+                f"**{sel_to.strftime('%d.%m.%Y')}** do 11:00 "
+                f"· {_nights_label(nights)}",
+                icon="✅",
+            )
+
+    with col_clear:
+        if sel_from is not None:
+            if st.button("Zrušit výběr", width="stretch"):
+                _clear_selection()
+                st.rerun()
 
 
 def _reservation_form(reservations):
-    st.subheader("Nová rezervace")
+    sel_from = st.session_state.sel_from
+    sel_to = st.session_state.sel_to
+
+    st.subheader("Dokončení rezervace")
+
+    if sel_from is None or sel_to is None:
+        st.caption(
+            "Nejdřív vyber termín kliknutím do kalendáře — "
+            "pak se tu objeví formulář."
+        )
+        return
+
+    nights = (sel_to - sel_from).days
 
     st.caption(
-        "Příjezd je možný od 15:00, odjezd nejpozději v 11:00. "
-        "Den odjezdu se proto smí krýt se dnem příjezdu dalšího hosta."
+        f"Termín: {sel_from.strftime('%d.%m.%Y')} od 15:00 → "
+        f"{sel_to.strftime('%d.%m.%Y')} do 11:00 ({_nights_label(nights)})"
     )
 
-    today = date.today()
-
     with st.form("new_reservation", clear_on_submit=True):
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
 
         with col1:
             first_name = st.text_input("Jméno")
-            date_from = st.date_input(
-                "Příjezd (od 15:00)",
-                value=today,
-                min_value=today,
-                format="DD.MM.YYYY",
-            )
 
         with col2:
             last_name = st.text_input("Příjmení")
-            date_to = st.date_input(
-                "Odjezd (do 11:00)",
-                value=today + timedelta(days=1),
-                min_value=today,
-                format="DD.MM.YYYY",
-            )
 
-        email = st.text_input("E-mail")
+        with col3:
+            email = st.text_input("E-mail")
 
-        submitted = st.form_submit_button("Odeslat rezervaci", type="primary")
+        submitted = st.form_submit_button(
+            "Odeslat rezervaci", type="primary"
+        )
 
     if not submitted:
         return
@@ -67,87 +145,64 @@ def _reservation_form(reservations):
     if "@" not in email or "." not in email.split("@")[-1]:
         errors.append("Vyplň platný e-mail.")
 
-    if date_to <= date_from:
-        errors.append("Datum odjezdu musí být až po datu příjezdu.")
-
     if errors:
         for message in errors:
             st.error(message)
         return
 
-    conflict = storage.find_conflict(date_from, date_to, reservations)
+    # Mezi výběrem a odesláním mohl někdo jiný termín zabrat.
+    conflict = storage.find_conflict(sel_from, sel_to)
 
     if conflict is not None:
         st.error(
-            f"Termín se překrývá s rezervací "
-            f"{conflict['first_name']} {conflict['last_name']} "
-            f"({conflict['date_from'].strftime('%d.%m.%Y')} – "
-            f"{conflict['date_to'].strftime('%d.%m.%Y')}). "
-            "Vyber jiný termín."
+            f"Termín mezitím obsadila rezervace "
+            f"{conflict['first_name']} {conflict['last_name']}. "
+            "Vyber prosím jiný."
         )
         return
 
-    storage.add_reservation(first_name, last_name, email, date_from, date_to)
-
-    nights = (date_to - date_from).days
-    noci = "noc" if nights == 1 else "noci" if nights < 5 else "nocí"
+    storage.add_reservation(first_name, last_name, email, sel_from, sel_to)
 
     set_flash(
         "success",
         f"Rezervace uložena: {first_name.strip()} {last_name.strip()}, "
-        f"{date_from.strftime('%d.%m.%Y')} – {date_to.strftime('%d.%m.%Y')} "
-        f"({nights} {noci}). Čeká na potvrzení — "
+        f"{sel_from.strftime('%d.%m.%Y')} – {sel_to.strftime('%d.%m.%Y')} "
+        f"({_nights_label(nights)}). Čeká na potvrzení — "
         "potvrdit ji můžeš na stránce Rezervace.",
     )
 
+    _clear_selection()
     st.rerun()
 
 
 def render():
     st.title("Kalendář obsazenosti")
 
+    st.session_state.setdefault("sel_from", None)
+    st.session_state.setdefault("sel_to", None)
+
     show_flash()
 
     reservations = storage.load_reservations()
+    today = date.today()
 
     st.html(render_legend())
 
-    if "month_offset" not in st.session_state:
-        st.session_state.month_offset = 0
+    _selection_bar()
 
-    col_prev, col_next, col_count, col_today = st.columns([1, 1, 2, 1])
+    months = month_range(today, MONTHS_AHEAD)
 
-    with col_prev:
-        if st.button("◀ Zpět", width="stretch"):
-            st.session_state.month_offset -= 1
-            st.rerun()
-
-    with col_next:
-        if st.button("Vpřed ▶", width="stretch"):
-            st.session_state.month_offset += 1
-            st.rerun()
-
-    with col_count:
-        count = st.selectbox(
-            "Počet měsíců",
-            options=[1, 2, 3, 4, 6],
-            index=2,
-            label_visibility="collapsed",
-        )
-
-    with col_today:
-        if st.button("Dnes", width="stretch"):
-            st.session_state.month_offset = 0
-            st.rerun()
-
-    today = date.today()
-    start_year, start_month = _shift_month(
-        today.year, today.month, st.session_state.month_offset
+    clicked = render_calendar(
+        months,
+        reservations,
+        st.session_state.sel_from,
+        st.session_state.sel_to,
+        today,
     )
 
-    months = _month_list(start_year, start_month, count)
-
-    st.html(render_months(months, reservations, today))
+    if clicked is not None:
+        _handle_click(clicked, reservations)
+        st.rerun()
 
     st.divider()
 

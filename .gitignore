@@ -5,3 +5,6 @@ __pycache__/
 venv/
 .env
 .streamlit/secrets.toml
+
+# Lokální databáze s rezervacemi - data nepatří do gitu
+*.db

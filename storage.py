@@ -14,6 +14,7 @@ připojení ke Googlu.
 import storage_appsscript
 import storage_sheets
 import storage_sqlite
+from storage_appsscript import StorageError  # noqa: F401  (pro stránky)
 
 STATUS_PENDING = "pending"
 STATUS_CONFIRMED = "confirmed"

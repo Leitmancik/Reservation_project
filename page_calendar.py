@@ -10,19 +10,9 @@ import streamlit as st
 
 import storage
 from calendar_view import month_range, render_calendar, render_legend
-from ui import set_flash, show_flash
+from ui import nights_label, set_flash, show_flash
 
 MONTHS_AHEAD = 12
-
-
-def _nights_label(nights):
-    if nights == 1:
-        return "1 noc"
-
-    if nights < 5:
-        return f"{nights} noci"
-
-    return f"{nights} nocí"
 
 
 def _clear_selection():
@@ -84,7 +74,7 @@ def _selection_bar():
             st.success(
                 f"**{sel_from.strftime('%d.%m.%Y')}** od 15:00 → "
                 f"**{sel_to.strftime('%d.%m.%Y')}** do 11:00 "
-                f"· {_nights_label(nights)}",
+                f"· {nights_label(nights)}",
                 icon="✅",
             )
 
@@ -112,7 +102,7 @@ def _reservation_form(reservations):
 
     st.caption(
         f"Termín: {sel_from.strftime('%d.%m.%Y')} od 15:00 → "
-        f"{sel_to.strftime('%d.%m.%Y')} do 11:00 ({_nights_label(nights)})"
+        f"{sel_to.strftime('%d.%m.%Y')} do 11:00 ({nights_label(nights)})"
     )
 
     with st.form("new_reservation", clear_on_submit=True):
@@ -150,24 +140,31 @@ def _reservation_form(reservations):
             st.error(message)
         return
 
-    # Mezi výběrem a odesláním mohl někdo jiný termín zabrat.
-    conflict = storage.find_conflict(sel_from, sel_to)
+    with st.spinner("Ukládám rezervaci…"):
+        try:
+            # Mezi výběrem a odesláním mohl někdo termín zabrat.
+            conflict = storage.find_conflict(sel_from, sel_to)
 
-    if conflict is not None:
-        st.error(
-            f"Termín mezitím obsadila rezervace "
-            f"{conflict['first_name']} {conflict['last_name']}. "
-            "Vyber prosím jiný."
-        )
-        return
+            if conflict is not None:
+                st.error(
+                    f"Termín mezitím obsadila rezervace "
+                    f"{conflict['first_name']} {conflict['last_name']}. "
+                    "Vyber prosím jiný."
+                )
+                return
 
-    storage.add_reservation(first_name, last_name, email, sel_from, sel_to)
+            storage.add_reservation(
+                first_name, last_name, email, sel_from, sel_to
+            )
+        except storage.StorageError as error:
+            st.error(f"Rezervaci se nepodařilo uložit. {error}")
+            return
 
     set_flash(
         "success",
         f"Rezervace uložena: {first_name.strip()} {last_name.strip()}, "
         f"{sel_from.strftime('%d.%m.%Y')} – {sel_to.strftime('%d.%m.%Y')} "
-        f"({_nights_label(nights)}). Čeká na potvrzení — "
+        f"({nights_label(nights)}). Čeká na potvrzení — "
         "potvrdit ji můžeš na stránce Rezervace.",
     )
 
@@ -183,7 +180,16 @@ def render():
 
     show_flash()
 
-    reservations = storage.load_reservations()
+    try:
+        reservations = storage.load_reservations()
+    except storage.StorageError as error:
+        st.error(f"Nepodařilo se načíst rezervace. {error}")
+        st.caption(
+            "Kalendář teď nejde zobrazit, protože není jisté, "
+            "které termíny jsou volné. Zkus stránku načíst znovu."
+        )
+        return
+
     today = date.today()
 
     st.html(render_legend())

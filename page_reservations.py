@@ -7,7 +7,7 @@ import streamlit as st
 
 import storage
 from calendar_view import COLORS
-from ui import set_flash, show_flash
+from ui import nights_label, set_flash, show_flash
 
 STATUS_LABELS = {
     storage.STATUS_PENDING: "Čeká na potvrzení",
@@ -57,7 +57,7 @@ def _render_row(res):
             st.caption(
                 f"{res['date_from'].strftime('%d.%m.%Y')} od 15:00 → "
                 f"{res['date_to'].strftime('%d.%m.%Y')} do 11:00 "
-                f"({nights} nocí) &nbsp;·&nbsp; {res['email']}"
+                f"({nights_label(nights)}) &nbsp;·&nbsp; {res['email']}"
             )
 
         with col_actions:
@@ -68,7 +68,15 @@ def _render_row(res):
                     type="primary",
                     width="stretch",
                 ):
-                    storage.set_status(res["id"], storage.STATUS_CONFIRMED)
+                    with st.spinner("Potvrzuji…"):
+                        try:
+                            storage.set_status(
+                                res["id"], storage.STATUS_CONFIRMED
+                            )
+                        except storage.StorageError as error:
+                            st.error(f"Nepodařilo se potvrdit. {error}")
+                            st.stop()
+
                     set_flash(
                         "success",
                         f"Rezervace {res['first_name']} {res['last_name']} "
@@ -81,7 +89,15 @@ def _render_row(res):
                     key=f"revert_{res['id']}",
                     width="stretch",
                 ):
-                    storage.set_status(res["id"], storage.STATUS_PENDING)
+                    with st.spinner("Vracím zpět…"):
+                        try:
+                            storage.set_status(
+                                res["id"], storage.STATUS_PENDING
+                            )
+                        except storage.StorageError as error:
+                            st.error(f"Nepodařilo se vrátit zpět. {error}")
+                            st.stop()
+
                     set_flash(
                         "info",
                         f"Potvrzení rezervace {res['first_name']} "
@@ -98,7 +114,13 @@ def _render_row(res):
                     type="primary",
                     width="stretch",
                 ):
-                    storage.delete_reservation(res["id"])
+                    with st.spinner("Mažu…"):
+                        try:
+                            storage.delete_reservation(res["id"])
+                        except storage.StorageError as error:
+                            st.error(f"Nepodařilo se smazat. {error}")
+                            st.stop()
+
                     set_flash(
                         "warning",
                         f"Rezervace {res['first_name']} {res['last_name']} "
@@ -112,7 +134,11 @@ def render():
 
     show_flash()
 
-    reservations = storage.load_reservations()
+    try:
+        reservations = storage.load_reservations()
+    except storage.StorageError as error:
+        st.error(f"Nepodařilo se načíst rezervace. {error}")
+        return
 
     if not reservations:
         st.info(

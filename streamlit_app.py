@@ -15,7 +15,11 @@ st.set_page_config(
     layout="wide",
 )
 
-storage.init_db()
+try:
+    storage.init_db()
+except Exception as error:
+    st.error(f"Nepodařilo se spojit s úložištěm rezervací. {error}")
+    st.stop()
 
 # url_path je potřeba zadat ručně — obě stránky mají funkci render(),
 # takže by si Streamlit odvodil stejnou adresu a spadl.

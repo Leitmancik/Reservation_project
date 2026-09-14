@@ -116,6 +116,14 @@ Data se posílají metodou GET v parametru `payload`. Některé domény
 Google Workspace totiž POST na webovou aplikaci neprotlačí a vrátí
 chybu 405. Skript umí obojí, aplikace používá GET, protože projde vždy.
 
+Google vydává výsledek na jednorázové adrese, která zhruba ve čtvrtině
+případů odpoví chybou, přestože skript proběhl v pořádku. Aplikace to
+řeší dvěma způsoby: požadavek zopakuje (až pětkrát) a identifikátor
+rezervace vyrábí sama, takže zopakovaný zápis skript rozpozná a řádek
+nezaloží podruhé. Pokud se odpověď ztratí i po všech pokusech, aplikace
+se nejdřív podívá do tabulky, jestli změna přece jen neproběhla — a
+teprve pak ohlásí chybu.
+
 #### Varianta B — servisní účet
 
 1. V [Google Cloud Console](https://console.cloud.google.com/) založ

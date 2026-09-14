@@ -127,7 +127,18 @@ function listRows(sheet) {
 }
 
 function addRow(sheet, row) {
-  const id = Utilities.getUuid().replace(/-/g, '').slice(0, 12);
+  // Identifikátor posílá aplikace. Když Google nedoručí odpověď,
+  // aplikace požadavek zopakuje — a protože dorazí se stejným ID,
+  // poznáme, že řádek už existuje, a nezaložíme ho podruhé.
+  const id = row['ID'];
+
+  if (!id) {
+    return { error: 'Chybí ID rezervace.' };
+  }
+
+  if (findRow(sheet, id) !== -1) {
+    return { ok: true, id: id, duplicate: true };
+  }
 
   sheet.appendRow([
     row['Jméno'],
@@ -174,8 +185,11 @@ function setStatus(sheet, id, status) {
 function deleteRow(sheet, id) {
   const row = findRow(sheet, id);
 
+  // Když už řádek není, je hotovo. Hlásit chybu by bylo matoucí —
+  // stalo by se to pokaždé, když aplikace zopakuje požadavek,
+  // jehož odpověď se ztratila.
   if (row === -1) {
-    return { error: 'Rezervace nenalezena: ' + id };
+    return { ok: true, alreadyGone: true };
   }
 
   sheet.deleteRow(row);

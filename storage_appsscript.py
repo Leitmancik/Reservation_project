@@ -15,6 +15,8 @@ Tabulka má sloupce:
 """
 
 import json
+import time
+import uuid
 from datetime import date, datetime
 
 import requests
@@ -30,6 +32,14 @@ STATUS_TO_SHEET = {
 SHEET_TO_STATUS = {v: k for k, v in STATUS_TO_SHEET.items()}
 
 TIMEOUT_SECONDS = 25
+
+# Google vydává výsledek na jednorázové adrese, která zhruba ve
+# čtvrtině případů odpoví 404, i když skript proběhl v pořádku.
+# Měřeno: 9 z 12 požadavků uspěje. Na hlavičkách ani na použité
+# knihovně to nezávisí, spolehlivě pomáhá jedině zopakování —
+# při pěti pokusech je šance na neúspěch kolem jedné promile.
+RETRY_ATTEMPTS = 5
+RETRY_DELAY_SECONDS = 0.8
 
 # Bez cache by se skript volal při každém kliknutí v kalendáři.
 CACHE_TTL_SECONDS = 20
@@ -56,6 +66,9 @@ def _call(action, **payload):
     Google Workspace totiž POST na webovou aplikaci neprotlačí a vrátí
     chybu 405 — GET projde vždy. Požadavky jsou krátké, do délky
     adresy se pohodlně vejdou.
+
+    Google navíc občas odmítne vydat výsledek, i když skript proběhl
+    v pořádku, proto se požadavek v případě potřeby zopakuje.
     """
     body = {
         "token": st.secrets["appsscript_token"],
@@ -63,45 +76,61 @@ def _call(action, **payload):
     }
     body.update(payload)
 
-    try:
-        response = requests.get(
-            st.secrets["appsscript_url"],
-            params={"payload": json.dumps(body, ensure_ascii=False)},
-            timeout=TIMEOUT_SECONDS,
-        )
-        response.raise_for_status()
-        data = response.json()
-    except requests.exceptions.Timeout:
-        raise StorageError(
-            "Tabulka neodpovídá. Zkus to prosím za chvíli znovu."
-        )
-    except requests.exceptions.RequestException as error:
-        raise StorageError(f"Nepodařilo se spojit s tabulkou: {error}")
-    except ValueError:
-        # Místo JSON přišlo HTML. Typicky přihlašovací stránka, když
-        # skript není nasazený s přístupem pro kohokoli, nebo hláška
-        # o chybějící funkci, když je nasazená stará verze kódu.
-        detail = ""
+    params = {"payload": json.dumps(body, ensure_ascii=False)}
+    last_error = None
 
-        if "doGet" in response.text:
-            detail = (
-                " Vypadá to na starou verzi skriptu — nasaď prosím "
-                "novou implementaci s aktuálním kódem."
+    for attempt in range(RETRY_ATTEMPTS):
+        if attempt:
+            time.sleep(RETRY_DELAY_SECONDS * attempt)
+
+        try:
+            response = requests.get(
+                st.secrets["appsscript_url"],
+                params=params,
+                timeout=TIMEOUT_SECONDS,
             )
-        elif "accounts.google.com" in response.text:
-            detail = (
-                " Skript není veřejný — v nasazení nastav přístup "
-                "„Kdokoli“."
+        except requests.exceptions.Timeout:
+            last_error = StorageError(
+                "Tabulka neodpovídá. Zkus to prosím za chvíli znovu."
             )
+            continue
+        except requests.exceptions.RequestException as error:
+            last_error = StorageError(
+                f"Nepodařilo se spojit s tabulkou: {error}"
+            )
+            continue
 
-        raise StorageError(
-            "Tabulka odpověděla nečekaně." + detail
-        )
+        try:
+            data = response.json()
+        except ValueError:
+            # Místo JSON přišlo HTML. Buď je něco špatně nastavené —
+            # to poznáme podle obsahu a nemá smysl to zkoušet znovu —
+            # nebo Google jen nevydal výsledek a pomůže zopakování.
+            text = response.text
 
-    if isinstance(data, dict) and data.get("error"):
-        raise StorageError(data["error"])
+            if "doGet" in text:
+                raise StorageError(
+                    "V tabulce je nasazená stará verze skriptu. "
+                    "Nasaď prosím novou verzi s aktuálním kódem."
+                )
 
-    return data
+            if "accounts.google.com" in text:
+                raise StorageError(
+                    "Skript není veřejný — v nasazení tabulky nastav "
+                    "přístup „Kdokoli“."
+                )
+
+            last_error = StorageError(
+                "Tabulka odpověděla nečekaně, zkus to prosím znovu."
+            )
+            continue
+
+        if isinstance(data, dict) and data.get("error"):
+            raise StorageError(data["error"])
+
+        return data
+
+    raise last_error or StorageError("Tabulka neodpovídá.")
 
 
 def init_db():
@@ -169,27 +198,70 @@ def _invalidate():
 
 
 def add_reservation(first_name, last_name, email, date_from, date_to):
-    _call(
-        "add",
-        row={
-            "Jméno": first_name.strip(),
-            "Příjmení": last_name.strip(),
-            "email": email.strip(),
-            "Datum - Start": date_from.isoformat(),
-            "Datum - Konec": date_to.isoformat(),
-            "Stav": STATUS_TO_SHEET[STATUS_PENDING],
-            "Vytvořeno": datetime.now().isoformat(timespec="seconds"),
-        },
-    )
+    # Identifikátor vyrábíme tady, ne v tabulce. Kdyby se odpověď
+    # ztratila a požadavek se zopakoval, dorazí se stejným ID a skript
+    # pozná, že řádek už založil — jinak by rezervace přibyla dvakrát.
+    reservation_id = uuid.uuid4().hex[:12]
+
+    row = {
+        "ID": reservation_id,
+        "Jméno": first_name.strip(),
+        "Příjmení": last_name.strip(),
+        "email": email.strip(),
+        "Datum - Start": date_from.isoformat(),
+        "Datum - Konec": date_to.isoformat(),
+        "Stav": STATUS_TO_SHEET[STATUS_PENDING],
+        "Vytvořeno": datetime.now().isoformat(timespec="seconds"),
+    }
+
+    try:
+        _call("add", row=row)
+    except StorageError:
+        # Odpověď se nemusela vrátit, i když zápis proběhl. Než chybu
+        # ohlásíme uživateli, podíváme se, jestli rezervace v tabulce
+        # není — jinak by ji zadal znovu a vznikl by duplikát.
+        if not _exists(reservation_id):
+            raise
 
     _invalidate()
 
 
+def _exists(reservation_id):
+    """Je rezervace s tímhle ID v tabulce?"""
+    try:
+        _invalidate()
+        return any(r["id"] == reservation_id for r in load_reservations())
+    except StorageError:
+        return False
+
+
 def set_status(reservation_id, status):
-    _call("set_status", id=reservation_id, status=STATUS_TO_SHEET[status])
+    try:
+        _call("set_status", id=reservation_id, status=STATUS_TO_SHEET[status])
+    except StorageError:
+        # Stejně jako u zápisu: změna mohla projít, jen se ztratila
+        # odpověď. Ověříme skutečný stav v tabulce.
+        _invalidate()
+
+        try:
+            current = [
+                r for r in load_reservations() if r["id"] == reservation_id
+            ]
+        except StorageError:
+            raise
+
+        if not current or current[0]["status"] != status:
+            raise
+
     _invalidate()
 
 
 def delete_reservation(reservation_id):
-    _call("delete", id=reservation_id)
+    try:
+        _call("delete", id=reservation_id)
+    except StorageError:
+        # Když řádek v tabulce opravdu není, mazání proběhlo.
+        if _exists(reservation_id):
+            raise
+
     _invalidate()

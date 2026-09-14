@@ -4,15 +4,26 @@ Termín se vybírá kliknutím do kalendáře: první klik určí den příjezdu
 druhý den odjezdu. Další klik začne výběr znovu.
 """
 
-from datetime import date
+from datetime import date, timedelta
 
 import streamlit as st
 
 import storage
-from calendar_view import month_range, render_calendar, render_legend
+from calendar_view import (
+    MONTH_NAMES,
+    month_range,
+    render_calendar,
+    render_legend,
+)
 from ui import nights_label, set_flash, show_flash
 
-MONTHS_AHEAD = 12
+# Kolik měsíců je vidět naráz a jak daleko dopředu jde listovat.
+MONTHS_VISIBLE = 2
+MAX_MONTH_OFFSET = 23
+
+# Nabízené délky pobytu. Většina hostů jezdí zhruba na týden,
+# tak ať to jde vybrat jedním kliknutím.
+QUICK_NIGHTS = [2, 3, 7, 14]
 
 
 def _clear_selection():
@@ -47,6 +58,87 @@ def _handle_click(day, reservations):
         return
 
     st.session_state.sel_to = day
+
+
+def _month_label(months):
+    """Popisek typu „Září – Říjen 2026“ nad kalendářem."""
+    (y1, m1), (y2, m2) = months[0], months[-1]
+
+    if y1 == y2:
+        return f"{MONTH_NAMES[m1 - 1]} – {MONTH_NAMES[m2 - 1]} {y1}"
+
+    return f"{MONTH_NAMES[m1 - 1]} {y1} – {MONTH_NAMES[m2 - 1]} {y2}"
+
+
+def _month_navigation(months):
+    """Šipky pro listování měsíci. Dozadu se nedá před aktuální měsíc."""
+    offset = st.session_state.month_offset
+
+    col_prev, col_label, col_next, col_refresh = st.columns([1, 6, 1, 1])
+
+    with col_prev:
+        if st.button(
+            "◀",
+            width="stretch",
+            disabled=offset == 0,
+            help="Předchozí měsíc",
+        ):
+            st.session_state.month_offset = max(0, offset - 1)
+            st.rerun()
+
+    with col_label:
+        st.markdown(
+            f"<div style='text-align:center;font-size:1.05rem;"
+            f"font-weight:600;padding-top:.35rem'>{_month_label(months)}</div>",
+            unsafe_allow_html=True,
+        )
+
+    with col_next:
+        if st.button(
+            "▶",
+            width="stretch",
+            disabled=offset >= MAX_MONTH_OFFSET,
+            help="Další měsíc",
+        ):
+            st.session_state.month_offset = min(MAX_MONTH_OFFSET, offset + 1)
+            st.rerun()
+
+    with col_refresh:
+        if st.button(
+            "↻",
+            width="stretch",
+            help="Načíst rezervace z tabulky znovu",
+        ):
+            storage.refresh()
+            st.rerun()
+
+
+def _quick_lengths(reservations):
+    """Tlačítka pro rychlý výběr délky pobytu od zvoleného příjezdu."""
+    sel_from = st.session_state.sel_from
+
+    st.caption("Nebo rovnou vyber délku pobytu:")
+
+    cols = st.columns(len(QUICK_NIGHTS))
+
+    for col, nights in zip(cols, QUICK_NIGHTS):
+        date_to = sel_from + timedelta(days=nights)
+        blocked = storage.find_conflict(sel_from, date_to, reservations)
+
+        with col:
+            if st.button(
+                nights_label(nights),
+                key=f"quick_{nights}",
+                width="stretch",
+                disabled=blocked is not None,
+                help=(
+                    "V tomhle termínu už je rezervace"
+                    if blocked is not None
+                    else f"Odjezd {date_to.strftime('%d.%m.%Y')}"
+                ),
+            ):
+                st.session_state.sel_to = date_to
+                st.rerun()
 
 
 def _selection_bar():
@@ -142,8 +234,11 @@ def _reservation_form(reservations):
 
     with st.spinner("Ukládám rezervaci…"):
         try:
-            # Mezi výběrem a odesláním mohl někdo termín zabrat.
-            conflict = storage.find_conflict(sel_from, sel_to)
+            # Mezi výběrem a odesláním mohl někdo termín zabrat, proto
+            # se tady ptáme přímo tabulky, ne uložených dat.
+            conflict = storage.find_conflict(
+                sel_from, sel_to, storage.load_reservations(force=True)
+            )
 
             if conflict is not None:
                 st.error(
@@ -173,10 +268,11 @@ def _reservation_form(reservations):
 
 
 def render():
-    st.title("Kalendář obsazenosti")
+    st.title("Rezervace chalupy")
 
     st.session_state.setdefault("sel_from", None)
     st.session_state.setdefault("sel_to", None)
+    st.session_state.setdefault("month_offset", 0)
 
     show_flash()
 
@@ -192,11 +288,15 @@ def render():
 
     today = date.today()
 
-    st.html(render_legend())
-
     _selection_bar()
 
-    months = month_range(today, MONTHS_AHEAD)
+    start = date(today.year, today.month, 1)
+    months = month_range(
+        _shift_start(start, st.session_state.month_offset),
+        MONTHS_VISIBLE,
+    )
+
+    _month_navigation(months)
 
     clicked = render_calendar(
         months,
@@ -210,6 +310,21 @@ def render():
         _handle_click(clicked, reservations)
         st.rerun()
 
+    # Rychlé délky pobytu dávají smysl jen ve chvíli, kdy je vybraný
+    # příjezd a chybí odjezd.
+    if (
+        st.session_state.sel_from is not None
+        and st.session_state.sel_to is None
+    ):
+        _quick_lengths(reservations)
+
+    st.html(render_legend())
+
     st.divider()
 
     _reservation_form(reservations)
+
+
+def _shift_start(start, offset):
+    total = start.year * 12 + (start.month - 1) + offset
+    return date(total // 12, total % 12 + 1, 1)

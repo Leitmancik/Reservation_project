@@ -171,7 +171,17 @@ def render():
 
     st.divider()
 
-    st.caption(f"Rezervace se ukládají do: **{storage.backend_name()}**")
+    col_note, col_refresh = st.columns([4, 1])
+
+    with col_note:
+        st.caption(
+            f"Rezervace se ukládají do: **{storage.backend_name()}**"
+        )
+
+    with col_refresh:
+        if st.button("↻ Načíst znovu", width="stretch"):
+            storage.refresh()
+            st.rerun()
 
     with st.expander("Přehled v tabulce a export"):
         df = _to_dataframe(reservations)

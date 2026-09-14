@@ -31,21 +31,24 @@ MONTH_NAMES = [
 WEEKDAY_NAMES = ["Po", "Út", "St", "Čt", "Pá", "So", "Ne"]
 
 FREE = "free"
-PAST = "past"   # den, který už byl — nejde ho vybrat
+PAST = "past"           # den, který už byl — nejde ho vybrat
+SELECTED = "selected"   # půlka dne, kterou zabírá právě vybíraný pobyt
 
 COLORS = {
     FREE: "#4ade80",
     STATUS_PENDING: "#fb923c",
     STATUS_CONFIRMED: "#ef4444",
     PAST: "#94a3b8",
+    SELECTED: "#2563eb",
 }
 
 # Stav výběru zakódovaný v klíči tlačítka.
 PICK_NONE = "sel0"      # mimo výběr
-PICK_EDGE = "sel1"      # den příjezdu nebo odjezdu
-PICK_INSIDE = "sel2"    # den uvnitř vybraného rozsahu
+PICK_START = "sel1"     # den příjezdu — zabírá jen odpoledne
+PICK_END = "sel2"       # den odjezdu — zabírá jen dopoledne
+PICK_INSIDE = "sel3"    # den uvnitř pobytu — zabírá celý
 
-STATES = [FREE, STATUS_PENDING, STATUS_CONFIRMED]
+STATES = [FREE, STATUS_PENDING, STATUS_CONFIRMED, SELECTED]
 
 
 def _day_css(today):
@@ -54,23 +57,26 @@ def _day_css(today):
         """
         [class*="st-key-day-"] button {
             width: 100%;
+            max-width: 52px;
+            margin: 0 auto;
             aspect-ratio: 1 / 1;
             min-height: 0 !important;
             padding: 0 !important;
-            border-radius: 6px;
-            border: 1px solid rgba(128, 128, 128, .35) !important;
-            font-size: .8rem !important;
-            font-weight: 700 !important;
+            border-radius: 8px;
+            border: 1px solid rgba(128, 128, 128, .3) !important;
+            font-size: .88rem !important;
+            font-weight: 600 !important;
             color: #111 !important;
             text-shadow:
                 0 0 3px rgba(255, 255, 255, .95),
                 0 0 3px rgba(255, 255, 255, .95);
-            transition: transform .08s ease;
+            transition: transform .08s ease, box-shadow .08s ease;
         }
         [class*="st-key-day-"] button:hover:not(:disabled) {
-            transform: scale(1.08);
-            border-color: #2563eb !important;
-            z-index: 2;
+            transform: scale(1.12);
+            border-color: #1d4ed8 !important;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, .28);
+            z-index: 3;
         }
         [class*="st-key-day-"] button:disabled {
             opacity: 1 !important;
@@ -113,20 +119,24 @@ def _day_css(today):
         "}"
     )
 
-    # Zvýraznění vybraného termínu.
+    # Číslo dne, kterého se dotýká výběr, píšeme bíle — na syté
+    # modré by tmavé číslo zaniklo.
     rules.append(
-        f'[class*="-{PICK_EDGE}"] button {{'
-        "outline: 3px solid #2563eb !important;"
-        "outline-offset: -3px;"
-        "box-shadow: 0 0 0 2px rgba(37, 99, 235, .35) !important;"
+        f'[class*="-{SELECTED}-"] button,'
+        f'[class*="-{SELECTED}-"] button:disabled {{'
+        "color: #fff !important;"
+        "text-shadow: 0 1px 3px rgba(0, 0, 0, .55) !important;"
         "}"
     )
-    rules.append(
-        f'[class*="-{PICK_INSIDE}"] button {{'
-        "outline: 2px solid #60a5fa !important;"
-        "outline-offset: -2px;"
-        "}"
-    )
+
+    # Krajní dny pobytu dostanou výraznější obrys, ať je poznat,
+    # kde pobyt začíná a končí.
+    for edge in (PICK_START, PICK_END):
+        rules.append(
+            f'[class*="-{edge}"] button {{'
+            "border: 2px solid #1e40af !important;"
+            "}"
+        )
 
     return "<style>" + "".join(rules) + "</style>"
 
@@ -182,11 +192,15 @@ def _state_name(res):
 
 
 def _pick_state(day, sel_from, sel_to):
+    """Jak se dne dotýká právě vybíraný pobyt."""
     if sel_from is None:
         return PICK_NONE
 
-    if day == sel_from or day == sel_to:
-        return PICK_EDGE
+    if day == sel_from:
+        return PICK_START
+
+    if day == sel_to:
+        return PICK_END
 
     if sel_to is not None and sel_from < day < sel_to:
         return PICK_INSIDE
@@ -275,10 +289,21 @@ def render_month(year, month, reservations, sel_from, sel_to, today):
                 morning_name = _state_name(morning)
                 afternoon_name = _state_name(afternoon)
 
+            # Vybíraný pobyt obarvíme modře, ale u krajních dnů jen tu
+            # polovinu, kterou skutečně zabírá: v den příjezdu se
+            # přijíždí až v 15:00, v den odjezdu se odjíždí v 11:00.
+            pick = _pick_state(day, sel_from, sel_to)
+
+            if pick == PICK_START:
+                afternoon_name = SELECTED
+            elif pick == PICK_END:
+                morning_name = SELECTED
+            elif pick == PICK_INSIDE:
+                morning_name = afternoon_name = SELECTED
+
             key = (
                 f"day-{day.isoformat()}"
-                f"-{morning_name}-{afternoon_name}-"
-                f"{_pick_state(day, sel_from, sel_to)}"
+                f"-{morning_name}-{afternoon_name}-{pick}"
             )
 
             with cols[weekday]:
@@ -296,7 +321,7 @@ def render_month(year, month, reservations, sel_from, sel_to, today):
     return clicked
 
 
-def render_calendar(months, reservations, sel_from, sel_to, today, columns=3):
+def render_calendar(months, reservations, sel_from, sel_to, today, columns=2):
     """Vykreslí mřížku měsíců. Vrátí datum, na které uživatel klikl."""
     st.html(_day_css(today))
 

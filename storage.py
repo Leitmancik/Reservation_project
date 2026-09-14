@@ -9,7 +9,15 @@ Máme tři úložiště se stejným rozhraním:
 Vybere se to první, které je nastavené ve Streamlit secrets. Když není
 nastavené nic, použije se SQLite, aby šla aplikace spustit i bez
 připojení ke Googlu.
+
+Načtené rezervace se drží v paměti otevřené stránky. Čtení z Google
+Sheets trvá několik sekund a kalendář se překresluje při každém
+kliknutí — bez toho by se na tabulku sahalo pořád dokola a appka by
+byla nepoužitelně pomalá. Znovu se načítá jen při otevření stránky,
+po zápisu a na vyžádání tlačítkem.
 """
+
+import streamlit as st
 
 import storage_appsscript
 import storage_sheets
@@ -44,24 +52,62 @@ def backend_name():
     return "místní soubor (data nepřežijí restart na Streamlit Cloud)"
 
 
-def init_db():
+# Klíč, pod kterým si stránka drží načtené rezervace.
+_CACHE_KEY = "_reservations_cache"
+
+
+@st.cache_resource(show_spinner=False)
+def _init_backend_once(name):
+    """Ověří spojení s úložištěm. Jen jednou, ne při každém překreslení.
+
+    Streamlit spouští celý skript znovu po každém kliknutí — bez tohohle
+    by se při každém kliknutí do kalendáře zbytečně volala tabulka.
+    """
     backend().init_db()
+    return True
 
 
-def load_reservations():
-    return backend().load_reservations()
+def init_db():
+    _init_backend_once(backend().__name__)
+
+
+def load_reservations(force=False):
+    """Vrátí rezervace, pokud možno z paměti stránky.
+
+    S `force=True` se vždy sáhne do tabulky — to je potřeba tam, kde
+    musíme mít jistotu, že data nejsou zastaralá, typicky při kontrole
+    volného termínu těsně před uložením rezervace.
+    """
+    if not force:
+        cached = st.session_state.get(_CACHE_KEY)
+
+        if cached is not None:
+            return cached
+
+    reservations = backend().load_reservations()
+    st.session_state[_CACHE_KEY] = reservations
+
+    return reservations
+
+
+def refresh():
+    """Zahodí uložené rezervace, takže se příště načtou z tabulky."""
+    st.session_state.pop(_CACHE_KEY, None)
 
 
 def add_reservation(first_name, last_name, email, date_from, date_to):
     backend().add_reservation(first_name, last_name, email, date_from, date_to)
+    refresh()
 
 
 def set_status(reservation_id, status):
     backend().set_status(reservation_id, status)
+    refresh()
 
 
 def delete_reservation(reservation_id):
     backend().delete_reservation(reservation_id)
+    refresh()
 
 
 def find_conflict(date_from, date_to, reservations=None):

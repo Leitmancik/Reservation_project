@@ -6,9 +6,11 @@ Streamlit aplikace pro správu rezervací ubytování.
 
 Aplikace má dvě stránky v horním menu:
 
-- **Kalendář** — barevný přehled obsazenosti na 12 měsíců dopředu.
-  Termín se vybírá kliknutím: první klik určí den příjezdu, druhý den
-  odjezdu. Pak se objeví formulář na jméno, příjmení a e-mail.
+- **Kalendář** — dva měsíce vedle sebe, mezi kterými se listuje
+  šipkami. Termín se vybírá kliknutím: první klik určí den příjezdu,
+  druhý den odjezdu. Když je vybraný jen příjezd, nabídnou se rychlé
+  délky pobytu (2, 3, 7 a 14 nocí). Pak se objeví formulář na jméno,
+  příjmení a e-mail.
 - **Rezervace** — seznam záznamů, potvrzování a mazání, export do CSV/Excelu
 
 ### Půlené dny
@@ -34,7 +36,12 @@ termíny, které se skutečně přesahují.
 | 🟩 zelená | volno |
 | 🟧 oranžová | rezervováno, čeká na potvrzení |
 | 🟥 červená | potvrzeno |
+| 🟦 modrá | právě vybíraný pobyt |
 | ⬜ šedá | den už byl, nejde vybrat |
+
+U vybíraného pobytu se stejně jako u rezervací obarví jen ty poloviny
+dnů, které pobyt skutečně zabírá — v den příjezdu odpoledne, v den
+odjezdu dopoledne.
 
 Plně obsazené dny nejdou kliknout. Dny, kde je volná jen jedna půlka,
 kliknout jdou — takový den totiž může posloužit jako odjezd jednoho
@@ -115,6 +122,16 @@ bez něj by do tabulky mohl psát kdokoli, kdo ji zná.
 Data se posílají metodou GET v parametru `payload`. Některé domény
 Google Workspace totiž POST na webovou aplikaci neprotlačí a vrátí
 chybu 405. Skript umí obojí, aplikace používá GET, protože projde vždy.
+
+### Rychlost
+
+Čtení z tabulky trvá několik sekund, proto si aplikace načtené
+rezervace drží v paměti otevřené stránky. Na tabulku sáhne jen při
+otevření stránky, po zápisu a po stisku tlačítka ↻. Klikání
+v kalendáři a listování měsíci tak nečeká na síť.
+
+Před uložením rezervace se ale vždy načtou čerstvá data, aby se
+nestalo, že mezitím někdo jiný stejný termín zabral.
 
 Google vydává výsledek na jednorázové adrese, která zhruba ve čtvrtině
 případů odpoví chybou, přestože skript proběhl v pořádku. Aplikace to

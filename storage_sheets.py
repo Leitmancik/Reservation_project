@@ -53,8 +53,10 @@ SCOPES = [
 ]
 
 # Jak dlouho držet načtená data, než se sáhne znovu do Sheets.
-# Bez toho by se tabulka volala při každém kliknutí v kalendáři.
-CACHE_TTL_SECONDS = 20
+# Krátká sdílená cache: když appku otevře víc lidí naráz, sáhne se
+# do tabulky jen jednou. Hlavní zrychlení ale dělá paměť stránky
+# ve storage.py.
+CACHE_TTL_SECONDS = 60
 
 
 def is_configured():

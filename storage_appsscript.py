@@ -39,10 +39,12 @@ TIMEOUT_SECONDS = 25
 # knihovně to nezávisí, spolehlivě pomáhá jedině zopakování —
 # při pěti pokusech je šance na neúspěch kolem jedné promile.
 RETRY_ATTEMPTS = 5
-RETRY_DELAY_SECONDS = 0.8
+RETRY_DELAY_SECONDS = 0.4
 
-# Bez cache by se skript volal při každém kliknutí v kalendáři.
-CACHE_TTL_SECONDS = 20
+# Krátká sdílená cache: když appku otevře víc lidí naráz, sáhne se
+# do tabulky jen jednou. Hlavní zrychlení ale dělá paměť stránky
+# ve storage.py.
+CACHE_TTL_SECONDS = 60
 
 
 class StorageError(RuntimeError):
@@ -134,8 +136,13 @@ def _call(action, **payload):
 
 
 def init_db():
-    """Ověří, že se skript ozývá. Volá se při startu aplikace."""
-    _call("ping")
+    """Nic nedělá — hlavičku si tabulka doplní sama při prvním zápisu.
+
+    Dřív se tu posílalo ověřovací volání, jenže to při startu aplikace
+    přidávalo několik sekund navíc (a při probouzení skriptu i přes
+    dvacet). Že spojení funguje, se stejně pozná hned při načtení
+    rezervací.
+    """
 
 
 def _parse_date(value):

@@ -52,6 +52,7 @@ hosta a zároveň příjezd dalšího.
 | `storage_sheets.py` | ukládání do Google Sheets (ostrý provoz) |
 | `storage_sqlite.py` | ukládání do souboru (lokální vývoj) |
 | `ui.py` | drobné UI pomůcky |
+| `nastav_sheets.py` | jednorázové nastavení přístupu ke Google Sheets |
 
 ## Lokální spuštění
 
@@ -90,8 +91,10 @@ i u tabulky sdílené odkazem. Postup:
    projekt a zapni v něm **Google Sheets API**.
 2. V **IAM & Admin → Service Accounts** vytvoř servisní účet a stáhni
    si jeho klíč ve formátu **JSON**.
-3. Zkopíruj `.streamlit/secrets.toml.example` na
-   `.streamlit/secrets.toml` a vyplň hodnoty z toho JSON souboru.
+3. Spusť `python nastav_sheets.py` — skript si stažený JSON najde sám,
+   vyrobí z něj `.streamlit/secrets.toml` a vypíše e-mail servisního
+   účtu. (Ruční varianta: zkopíruj `.streamlit/secrets.toml.example`
+   na `.streamlit/secrets.toml` a vyplň hodnoty z JSON souboru.)
 4. Otevři tabulku v prohlížeči, dej **Sdílet** a nasdílej ji na
    `client_email` ze servisního účtu s právem **Editor**.
 5. Na Streamlit Community Cloud vlož stejný obsah do

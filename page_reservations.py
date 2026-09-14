@@ -145,6 +145,8 @@ def render():
 
     st.divider()
 
+    st.caption(f"Rezervace se ukládají do: **{storage.backend_name()}**")
+
     with st.expander("Přehled v tabulce a export"):
         df = _to_dataframe(reservations)
         st.dataframe(df, width="stretch", hide_index=True)

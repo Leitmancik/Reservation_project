@@ -1,106 +1,56 @@
-"""Ukládání rezervací.
+"""Přístup k rezervacím — jediné místo, přes které aplikace sahá na data.
 
-Celá aplikace sahá na data jenom přes funkce v tomhle souboru.
-Díky tomu jde SQLite kdykoliv vyměnit za Google Sheets nebo jinou
-databázi — stačí přepsat tenhle jeden soubor, zbytek appky zůstane.
+Máme dvě úložiště se stejným rozhraním:
+
+    storage_sheets.py  — Google Sheets, ostrý provoz
+    storage_sqlite.py  — soubor na disku, lokální vývoj
+
+Použije se Sheets, jakmile jsou ve Streamlit secrets přihlašovací údaje
+servisního účtu. Jinak appka spadne zpátky na SQLite, aby šla spustit
+i bez připojení ke Googlu.
 """
 
-import sqlite3
-from datetime import date
-from pathlib import Path
-
-DB_PATH = Path(__file__).parent / "reservations.db"
+import storage_sheets
+import storage_sqlite
 
 STATUS_PENDING = "pending"
 STATUS_CONFIRMED = "confirmed"
 
 
-def _connect():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+def backend():
+    """Vrátí modul, který se právě používá k ukládání."""
+    if storage_sheets.is_configured():
+        return storage_sheets
+
+    return storage_sqlite
+
+
+def backend_name():
+    """Krátký popis úložiště pro zobrazení v aplikaci."""
+    if backend() is storage_sheets:
+        return "Google Sheets"
+
+    return "místní soubor (data nepřežijí restart na Streamlit Cloud)"
 
 
 def init_db():
-    """Vytvoří tabulku, pokud ještě neexistuje. Volá se při startu."""
-    with _connect() as conn:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS reservations (
-                id         INTEGER PRIMARY KEY AUTOINCREMENT,
-                first_name TEXT NOT NULL,
-                last_name  TEXT NOT NULL,
-                email      TEXT NOT NULL,
-                date_from  TEXT NOT NULL,
-                date_to    TEXT NOT NULL,
-                status     TEXT NOT NULL,
-                created_at TEXT NOT NULL
-            )
-            """
-        )
+    backend().init_db()
 
 
 def load_reservations():
-    """Vrátí všechny rezervace jako seznam slovníků, seřazené podle příjezdu."""
-    with _connect() as conn:
-        rows = conn.execute(
-            "SELECT * FROM reservations ORDER BY date_from"
-        ).fetchall()
-
-    return [
-        {
-            "id": row["id"],
-            "first_name": row["first_name"],
-            "last_name": row["last_name"],
-            "email": row["email"],
-            "date_from": date.fromisoformat(row["date_from"]),
-            "date_to": date.fromisoformat(row["date_to"]),
-            "status": row["status"],
-            "created_at": row["created_at"],
-        }
-        for row in rows
-    ]
+    return backend().load_reservations()
 
 
 def add_reservation(first_name, last_name, email, date_from, date_to):
-    """Přidá novou rezervaci ve stavu 'pending' (čeká na potvrzení)."""
-    from datetime import datetime
-
-    with _connect() as conn:
-        conn.execute(
-            """
-            INSERT INTO reservations
-                (first_name, last_name, email, date_from, date_to,
-                 status, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                first_name.strip(),
-                last_name.strip(),
-                email.strip(),
-                date_from.isoformat(),
-                date_to.isoformat(),
-                STATUS_PENDING,
-                datetime.now().isoformat(timespec="seconds"),
-            ),
-        )
+    backend().add_reservation(first_name, last_name, email, date_from, date_to)
 
 
 def set_status(reservation_id, status):
-    """Přepne rezervaci mezi 'pending' a 'confirmed'."""
-    with _connect() as conn:
-        conn.execute(
-            "UPDATE reservations SET status = ? WHERE id = ?",
-            (status, reservation_id),
-        )
+    backend().set_status(reservation_id, status)
 
 
 def delete_reservation(reservation_id):
-    with _connect() as conn:
-        conn.execute(
-            "DELETE FROM reservations WHERE id = ?",
-            (reservation_id,),
-        )
+    backend().delete_reservation(reservation_id)
 
 
 def find_conflict(date_from, date_to, reservations=None):

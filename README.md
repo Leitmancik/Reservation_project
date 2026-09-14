@@ -49,10 +49,12 @@ hosta a zároveň příjezd dalšího.
 | `page_reservations.py` | stránka Rezervace |
 | `calendar_view.py` | vykreslení kalendáře (HTML/CSS, půlené dny) |
 | `storage.py` | přepíná úložiště, jediné místo sahající na data |
-| `storage_sheets.py` | ukládání do Google Sheets (ostrý provoz) |
+| `storage_appsscript.py` | ukládání do Sheets přes skript v tabulce |
+| `storage_sheets.py` | ukládání do Sheets přes servisní účet |
 | `storage_sqlite.py` | ukládání do souboru (lokální vývoj) |
 | `ui.py` | drobné UI pomůcky |
-| `nastav_sheets.py` | jednorázové nastavení přístupu ke Google Sheets |
+| `nastav_sheets.py` | jednorázové nastavení servisního účtu |
+| `apps_script/Kod.gs` | skript, který běží uvnitř tabulky |
 
 ## Lokální spuštění
 
@@ -84,8 +86,31 @@ Do tabulky jde psát i ručně — jen ty tři sloupce nemazat.
 
 ### Nastavení přístupu
 
-Zápis do Google Sheets vyžaduje přihlášení přes servisní účet, a to
-i u tabulky sdílené odkazem. Postup:
+Zápis do Google Sheets vyžaduje přihlášení, a to i u tabulky sdílené
+odkazem. Jsou na to dvě cesty a stačí si vybrat jednu.
+
+#### Varianta A — Apps Script (doporučeno)
+
+Nepotřebuje Google Cloud ani stažené klíče, takže ji neblokují
+bezpečnostní politiky organizace. Skript běží přímo v tabulce.
+
+1. Otevři tabulku → **Rozšíření → Apps Script**
+2. Smaž ukázkový obsah a vlož kód z `apps_script/Kod.gs`
+3. V něm nahraď `SEM_VLOZ_TOKEN` vlastním heslem
+4. **Nasadit → Nová implementace** → typ **Webová aplikace**,
+   spustit jako **Já**, přístup **Kdokoli** → **Nasadit**
+5. Zkopíruj adresu webové aplikace (končí na `/exec`)
+6. Do `.streamlit/secrets.toml` vlož:
+
+   ```toml
+   appsscript_url = "https://script.google.com/macros/s/..../exec"
+   appsscript_token = "stejné heslo jako v Kod.gs"
+   ```
+
+Token funguje jako heslo — adresa webové aplikace je veřejná, takže
+bez něj by do tabulky mohl psát kdokoli, kdo ji zná.
+
+#### Varianta B — servisní účet
 
 1. V [Google Cloud Console](https://console.cloud.google.com/) založ
    projekt a zapni v něm **Google Sheets API**.
@@ -93,12 +118,16 @@ i u tabulky sdílené odkazem. Postup:
    si jeho klíč ve formátu **JSON**.
 3. Spusť `python nastav_sheets.py` — skript si stažený JSON najde sám,
    vyrobí z něj `.streamlit/secrets.toml` a vypíše e-mail servisního
-   účtu. (Ruční varianta: zkopíruj `.streamlit/secrets.toml.example`
-   na `.streamlit/secrets.toml` a vyplň hodnoty z JSON souboru.)
-4. Otevři tabulku v prohlížeči, dej **Sdílet** a nasdílej ji na
-   `client_email` ze servisního účtu s právem **Editor**.
-5. Na Streamlit Community Cloud vlož stejný obsah do
-   **Settings → Secrets** (soubor se tam nenahrává).
+   účtu.
+4. Otevři tabulku, dej **Sdílet** a nasdílej ji na ten e-mail
+   s právem **Editor**.
+
+Pozor: některé organizace zakazují stahování klíčů k servisním účtům
+(politika `iam.disableServiceAccountKeyCreation`). Pak použij
+variantu A.
+
+Na Streamlit Community Cloud se obsah `secrets.toml` vkládá do
+**Settings → Secrets** (soubor se tam nenahrává).
 
 Dokud přihlašovací údaje chybí, aplikace ukládá do SQLite souboru
 `reservations.db` vedle kódu, aby šla spustit i bez připojení ke

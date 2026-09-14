@@ -1,15 +1,17 @@
 """Přístup k rezervacím — jediné místo, přes které aplikace sahá na data.
 
-Máme dvě úložiště se stejným rozhraním:
+Máme tři úložiště se stejným rozhraním:
 
-    storage_sheets.py  — Google Sheets, ostrý provoz
-    storage_sqlite.py  — soubor na disku, lokální vývoj
+    storage_appsscript.py — Google Sheets přes skript v tabulce
+    storage_sheets.py     — Google Sheets přes servisní účet
+    storage_sqlite.py     — soubor na disku, lokální vývoj
 
-Použije se Sheets, jakmile jsou ve Streamlit secrets přihlašovací údaje
-servisního účtu. Jinak appka spadne zpátky na SQLite, aby šla spustit
-i bez připojení ke Googlu.
+Vybere se to první, které je nastavené ve Streamlit secrets. Když není
+nastavené nic, použije se SQLite, aby šla aplikace spustit i bez
+připojení ke Googlu.
 """
 
+import storage_appsscript
 import storage_sheets
 import storage_sqlite
 
@@ -19,6 +21,9 @@ STATUS_CONFIRMED = "confirmed"
 
 def backend():
     """Vrátí modul, který se právě používá k ukládání."""
+    if storage_appsscript.is_configured():
+        return storage_appsscript
+
     if storage_sheets.is_configured():
         return storage_sheets
 
@@ -27,8 +32,13 @@ def backend():
 
 def backend_name():
     """Krátký popis úložiště pro zobrazení v aplikaci."""
-    if backend() is storage_sheets:
-        return "Google Sheets"
+    current = backend()
+
+    if current is storage_appsscript:
+        return "Google Sheets (přes skript v tabulce)"
+
+    if current is storage_sheets:
+        return "Google Sheets (přes servisní účet)"
 
     return "místní soubor (data nepřežijí restart na Streamlit Cloud)"
 

@@ -99,6 +99,8 @@ bezpečnostní politiky organizace. Skript běží přímo v tabulce.
 3. V něm nahraď `SEM_VLOZ_TOKEN` vlastním heslem
 4. **Nasadit → Nová implementace** → typ **Webová aplikace**,
    spustit jako **Já**, přístup **Kdokoli** → **Nasadit**
+   (přístup musí být **Kdokoli**, ne „kdokoli v rámci domény" —
+   jinak se k němu aplikace nedostane)
 5. Zkopíruj adresu webové aplikace (končí na `/exec`)
 6. Do `.streamlit/secrets.toml` vlož:
 
@@ -109,6 +111,10 @@ bezpečnostní politiky organizace. Skript běží přímo v tabulce.
 
 Token funguje jako heslo — adresa webové aplikace je veřejná, takže
 bez něj by do tabulky mohl psát kdokoli, kdo ji zná.
+
+Data se posílají metodou GET v parametru `payload`. Některé domény
+Google Workspace totiž POST na webovou aplikaci neprotlačí a vrátí
+chybu 405. Skript umí obojí, aplikace používá GET, protože projde vždy.
 
 #### Varianta B — servisní účet
 

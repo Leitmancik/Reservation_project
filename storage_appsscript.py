@@ -14,6 +14,7 @@ Tabulka má sloupce:
     Jméno | Příjmení | email | Datum - Start | Datum - Konec | Stav | ID | Vytvořeno
 """
 
+import json
 from datetime import date, datetime
 
 import requests
@@ -49,7 +50,13 @@ def is_configured():
 
 
 def _call(action, **payload):
-    """Pošle požadavek skriptu v tabulce a vrátí jeho odpověď."""
+    """Pošle požadavek skriptu v tabulce a vrátí jeho odpověď.
+
+    Data posíláme metodou GET v parametru "payload". Některé domény
+    Google Workspace totiž POST na webovou aplikaci neprotlačí a vrátí
+    chybu 405 — GET projde vždy. Požadavky jsou krátké, do délky
+    adresy se pohodlně vejdou.
+    """
     body = {
         "token": st.secrets["appsscript_token"],
         "action": action,
@@ -57,9 +64,9 @@ def _call(action, **payload):
     body.update(payload)
 
     try:
-        response = requests.post(
+        response = requests.get(
             st.secrets["appsscript_url"],
-            json=body,
+            params={"payload": json.dumps(body, ensure_ascii=False)},
             timeout=TIMEOUT_SECONDS,
         )
         response.raise_for_status()
@@ -71,11 +78,24 @@ def _call(action, **payload):
     except requests.exceptions.RequestException as error:
         raise StorageError(f"Nepodařilo se spojit s tabulkou: {error}")
     except ValueError:
-        # Místo JSON přišlo HTML — typicky přihlašovací stránka, když
-        # skript není nasazený s přístupem pro kohokoli.
+        # Místo JSON přišlo HTML. Typicky přihlašovací stránka, když
+        # skript není nasazený s přístupem pro kohokoli, nebo hláška
+        # o chybějící funkci, když je nasazená stará verze kódu.
+        detail = ""
+
+        if "doGet" in response.text:
+            detail = (
+                " Vypadá to na starou verzi skriptu — nasaď prosím "
+                "novou implementaci s aktuálním kódem."
+            )
+        elif "accounts.google.com" in response.text:
+            detail = (
+                " Skript není veřejný — v nasazení nastav přístup "
+                "„Kdokoli“."
+            )
+
         raise StorageError(
-            "Tabulka odpověděla nečekaně. Zkontroluj, že je Apps Script "
-            "nasazený s přístupem „Kdokoli“."
+            "Tabulka odpověděla nečekaně." + detail
         )
 
     if isinstance(data, dict) and data.get("error"):

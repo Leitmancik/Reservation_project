@@ -5,6 +5,10 @@
  * Nasadit → Nová implementace → typ "Webová aplikace" →
  * Spustit jako "Já", Přístup "Kdokoli" → zkopírovat URL.
  *
+ * Požadavky přijímáme přes GET i POST. Některé domény Google Workspace
+ * POST na webovou aplikaci neprotlačí (vrátí 405), proto aplikace
+ * standardně posílá data v parametru "payload" metodou GET.
+ *
  * TOKEN níž musí být stejný jako v nastavení aplikace. Slouží jako
  * heslo — adresa webové aplikace je totiž veřejná, takže bez něj by
  * do tabulky mohl psát kdokoli, kdo ji zná.
@@ -26,7 +30,19 @@ const HEADER = [
 const COL_ID = 7;
 const COL_STATUS = 6;
 
+function doGet(e) {
+  return handle(e && e.parameter ? e.parameter.payload : null);
+}
+
 function doPost(e) {
+  return handle(e && e.postData ? e.postData.contents : null);
+}
+
+function handle(rawRequest) {
+  if (!rawRequest) {
+    return json({ error: 'Chybí data požadavku.' });
+  }
+
   // Zámek brání tomu, aby dvě rezervace odeslané naráz
   // přepsaly jedna druhou.
   const lock = LockService.getScriptLock();
@@ -38,7 +54,7 @@ function doPost(e) {
   }
 
   try {
-    const request = JSON.parse(e.postData.contents);
+    const request = JSON.parse(rawRequest);
 
     if (request.token !== TOKEN) {
       return json({ error: 'Neplatný token.' });

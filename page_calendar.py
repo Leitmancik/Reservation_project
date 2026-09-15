@@ -83,6 +83,14 @@ def _clear_selection():
     st.session_state.sel_to = None
 
 
+def _both_halves_confirmed(morning, afternoon):
+    """Drží obě půlky dne potvrzená rezervace?"""
+    return all(
+        res is not None and res["status"] == storage.STATUS_CONFIRMED
+        for res in (morning, afternoon)
+    )
+
+
 def _handle_click(day, reservations, view=VIEW_GUEST):
     """Zpracuje kliknutí na den v kalendáři."""
     sel_from = st.session_state.sel_from
@@ -95,9 +103,10 @@ def _handle_click(day, reservations, view=VIEW_GUEST):
     # nápověda tlačítka se ukáže jen pod myší.
     st.session_state.detail_day = day
 
-    # Plně obsazený den se rezervovat nedá, takže výběr necháme být
-    # a zůstane jen u detailu.
-    if morning is not None and afternoon is not None:
+    # Blokuje jen den, jehož obě půlky drží potvrzená rezervace.
+    # Nepotvrzená je zatím poptávka, ne překážka — jinak by „na dotaz“
+    # nedávalo smysl, protože by se nedalo zeptat.
+    if _both_halves_confirmed(morning, afternoon):
         return
 
     # Kompletní výběr nebo klik před začátek = začínáme znovu.
@@ -146,46 +155,45 @@ def _view_switch():
         VIEW_ADMIN: "Přehled obsazenosti",
     }
 
-    return st.segmented_control(
-        "Zobrazení",
-        options=[VIEW_GUEST, VIEW_ADMIN],
-        format_func=lambda value: labels[value],
-        default=VIEW_GUEST,
-        required=True,
-        key="cal_view",
-        label_visibility="collapsed",
-    )
+    col_view, col_refresh = st.columns([4, 1])
+
+    with col_view:
+        view = st.segmented_control(
+            "Zobrazení",
+            options=[VIEW_GUEST, VIEW_ADMIN],
+            format_func=lambda value: labels[value],
+            default=VIEW_GUEST,
+            required=True,
+            key="cal_view",
+            label_visibility="collapsed",
+        )
+
+    # Načtení znovu zahodí rezervace uložené v paměti stránky. Host ho
+    # nepotřebuje — před uložením rezervace se čerstvá data načtou tak
+    # jako tak, takže mu zastaralá mezipaměť uškodit nemůže.
+    if view == VIEW_ADMIN:
+        with col_refresh:
+            if st.button(
+                "↻ Načíst znovu",
+                key="nav_refresh",
+                width="stretch",
+            ):
+                storage.refresh()
+                st.rerun()
+
+    return view
 
 
-def _month_label(months):
-    """Popisek typu „Září – Říjen 2026“ nad kalendářem."""
-    (y1, m1), (y2, m2) = months[0], months[-1]
+def _nav_arrows():
+    """Vrátí dvojici funkcí, které vykreslí šipky pro listování.
 
-    # Na telefonu je vidět jediný měsíc — „Říjen – Říjen 2026“ by
-    # vypadalo jako chyba.
-    if (y1, m1) == (y2, m2):
-        return f"{MONTH_NAMES[m1 - 1]} {y1}"
-
-    if y1 == y2:
-        return f"{MONTH_NAMES[m1 - 1]} – {MONTH_NAMES[m2 - 1]} {y1}"
-
-    return f"{MONTH_NAMES[m1 - 1]} {y1} – {MONTH_NAMES[m2 - 1]} {y2}"
-
-
-def _month_navigation(months):
-    """Šipky pro listování měsíci. Dozadu se nedá před aktuální měsíc."""
+    Kalendář je zavolá do krajních sloupců řádku s měsíci, takže šipky
+    stojí přímo u mřížky. Posun měsíců zůstává tady, protože stránka
+    drží stav a ví, kam až se smí listovat.
+    """
     offset = st.session_state.month_offset
 
-    # Na telefonu je popisek kratší („Říjen 2026“ místo
-    # „Září – Říjen 2026“), tak se šipkám uvolní místo — v poměru
-    # 1:6:1:1 by na 375px displeji měly sotva 40 px na dotyk.
-    spec = [1, 3, 1, 1] if _is_mobile() else [1, 6, 1, 1]
-
-    col_prev, col_label, col_next, col_refresh = st.columns(
-        spec, wrap=False
-    )
-
-    with col_prev:
+    def dozadu():
         if st.button(
             "◀",
             key="nav_prev",
@@ -196,14 +204,7 @@ def _month_navigation(months):
             st.session_state.month_offset = max(0, offset - 1)
             st.rerun()
 
-    with col_label:
-        st.markdown(
-            f"<div style='text-align:center;font-size:1.05rem;"
-            f"font-weight:600;padding-top:.35rem'>{_month_label(months)}</div>",
-            unsafe_allow_html=True,
-        )
-
-    with col_next:
+    def dopredu():
         if st.button(
             "▶",
             key="nav_next",
@@ -214,15 +215,7 @@ def _month_navigation(months):
             st.session_state.month_offset = min(MAX_MONTH_OFFSET, offset + 1)
             st.rerun()
 
-    with col_refresh:
-        if st.button(
-            "↻",
-            key="nav_refresh",
-            width="stretch",
-            help="Načíst rezervace z tabulky znovu",
-        ):
-            storage.refresh()
-            st.rerun()
+    return dozadu, dopredu
 
 
 def _day_detail(reservations, view=VIEW_GUEST):
@@ -253,9 +246,14 @@ def _day_detail(reservations, view=VIEW_GUEST):
         st.markdown(half_line(morning, "do 11:00"))
         st.markdown(half_line(afternoon, "od 15:00"))
 
-        if morning is not None and afternoon is not None:
+        if _both_halves_confirmed(morning, afternoon):
             st.caption(
-                "Celý den je obsazený, jako termín ho vybrat nejde."
+                "Celý den je potvrzený, jako termín ho vybrat nejde."
+            )
+        elif morning is not None and afternoon is not None:
+            st.caption(
+                "Rezervace na tenhle den zatím není potvrzená — "
+                "termín si můžeš vyžádat a ozveme se ti."
             )
 
 
@@ -538,7 +536,7 @@ def render():
         visible,
     )
 
-    _month_navigation(months)
+    dozadu, dopredu = _nav_arrows()
 
     clicked = render_calendar(
         months,
@@ -548,6 +546,8 @@ def render():
         today,
         columns=visible,
         view=view,
+        nav_prev=dozadu,
+        nav_next=dopredu,
     )
 
     if clicked is not None:

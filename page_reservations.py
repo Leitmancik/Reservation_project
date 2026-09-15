@@ -59,7 +59,14 @@ def _status_badge(status):
     )
 
 
-def _render_row(res):
+def _render_row(res, reservations):
+    # Na jeden termín může být víc poptávek — nepotvrzené se navzájem
+    # neblokují. Majitel to potřebuje vidět: je to důvod urgovat toho,
+    # kdo si termín zamluvil první.
+    souperi = storage.find_overlap(
+        res["date_from"], res["date_to"], reservations, ignore_id=res["id"]
+    )
+
     with st.container(border=True):
         col_info, col_actions = st.columns([3, 1])
 
@@ -85,6 +92,15 @@ def _render_row(res):
 
             st.caption(detail)
 
+            if souperi is not None:
+                st.caption(
+                    f"⚠️ Termín se kryje s rezervací "
+                    f"{souperi['first_name']} {souperi['last_name']} "
+                    f"({souperi['date_from'].strftime('%d.%m.')} – "
+                    f"{souperi['date_to'].strftime('%d.%m.%Y')}, "
+                    f"{STATUS_LABELS[souperi['status']].lower()})."
+                )
+
         with col_actions:
             if res["status"] == storage.STATUS_PENDING:
                 if st.button(
@@ -95,6 +111,29 @@ def _render_row(res):
                 ):
                     with st.spinner("Potvrzuji…"):
                         try:
+                            # Nepotvrzené rezervace termín neblokují,
+                            # takže jich na stejný termín může být víc.
+                            # Potvrdit se ale smí jen jedna — tady je
+                            # jediné místo, kde se dvojité rezervaci
+                            # dá zabránit.
+                            srazka = storage.find_conflict(
+                                res["date_from"],
+                                res["date_to"],
+                                storage.load_reservations(force=True),
+                            )
+
+                            if srazka is not None:
+                                st.error(
+                                    "Termín se překrývá s už potvrzenou "
+                                    f"rezervací {srazka['first_name']} "
+                                    f"{srazka['last_name']} "
+                                    f"({srazka['date_from'].strftime('%d.%m.%Y')}"
+                                    f" – {srazka['date_to'].strftime('%d.%m.%Y')})."
+                                    " Potvrdit obě nejde — nejdřív zruš"
+                                    " potvrzení té druhé."
+                                )
+                                st.stop()
+
                             storage.set_status(
                                 res["id"], storage.STATUS_CONFIRMED
                             )
@@ -197,12 +236,12 @@ def render():
     if pending:
         st.subheader("Čeká na potvrzení")
         for res in pending:
-            _render_row(res)
+            _render_row(res, reservations)
 
     if confirmed:
         st.subheader("Potvrzené")
         for res in confirmed:
-            _render_row(res)
+            _render_row(res, reservations)
 
     st.divider()
 

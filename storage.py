@@ -164,17 +164,50 @@ def delete_price(price_id):
     refresh_prices()
 
 
-def find_conflict(date_from, date_to, reservations=None):
-    """Najde rezervaci, která se s daným termínem překrývá.
+def find_conflict(
+    date_from, date_to, reservations=None, statuses=(STATUS_CONFIRMED,)
+):
+    """Najde rezervaci, která danému termínu brání.
 
     Protože se odjíždí v 11:00 a přijíždí až v 15:00, smí na sebe dva
     pobyty navazovat ve stejný den — odjezd 5. a příjezd 5. je v pořádku.
     Konflikt je až tehdy, když se termíny skutečně přesahují.
+
+    Ve výchozím stavu překáží jen potvrzené rezervace. Nepotvrzená je
+    zatím jen poptávka: majitel ji ještě nepotvrdil a zákazník nemusí
+    mít zájem. Blokovat kvůli ní termín by znamenalo držet chalupu
+    prázdnou kvůli někomu, kdo si to možná rozmyslel — a hlavně by
+    postavení „na dotaz“ ztratilo smysl, protože by se nedalo zeptat.
+
+    `statuses` umožní zeptat se i na širší překryv. Potvrzování
+    rezervace ho používá, aby se dvě potvrzené nikdy nepřekryly.
     """
     if reservations is None:
         reservations = load_reservations()
 
     for res in reservations:
+        if res["status"] not in statuses:
+            continue
+
+        if date_from < res["date_to"] and res["date_from"] < date_to:
+            return res
+
+    return None
+
+
+def find_overlap(date_from, date_to, reservations=None, ignore_id=None):
+    """Najde jakýkoli překryv bez ohledu na stav, kromě dané rezervace.
+
+    Slouží k upozornění, ne k blokování: majitel potřebuje vědět, že
+    na termín existuje víc poptávek.
+    """
+    if reservations is None:
+        reservations = load_reservations()
+
+    for res in reservations:
+        if ignore_id is not None and str(res["id"]) == str(ignore_id):
+            continue
+
         if date_from < res["date_to"] and res["date_from"] < date_to:
             return res
 

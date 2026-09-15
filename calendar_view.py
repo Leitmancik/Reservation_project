@@ -53,15 +53,20 @@ VIEW_ADMIN = "admin"   # barevný přehled obsazenosti pro správce
 
 # Paleta pohledu hosta ve dvou variantách.
 #
-# Jedna sada barev nemůže obsloužit oba motivy. Poloprůhledná vrstva
-# totiž světlé pozadí výrazně změní, ale tmavé skoro ne — růžová
-# s alfou .26 dá na bílé jasnou růžovou a na tmavé jen sotva znatelný
-# nádech. Na tmavém je proto potřeba světlejší základ a vyšší krytí.
+# Všechny dostupné dny jsou světlé v obou motivech — kalendář tak
+# funguje jako světlá karta položená na stránce, ať je stránka bílá
+# nebo tmavá. Tmavý zůstane jen den, který už proběhl, takže odžitá
+# část měsíce viditelně zapadne pod povrch.
 #
-# Přepíná se přes prefers-color-scheme, ne z Pythonu: Streamlit motiv
-# do stránky nedává a ve výchozím nastavení ho přebírá od systému
-# (projekt nemá .streamlit/config.toml, který by to přebil). CSS tak
-# reaguje okamžitě a nepotřebuje rerun.
+# Díky tomu je číslo dne vždycky tmavé a nemusí se řídit motivem.
+# Předchozí verze používala poloprůhledné vrstvy, jenže ty se chovají
+# nesymetricky: světlé pozadí změní výrazně, tmavé skoro ne. Co bylo
+# čitelné na bílém, na tmavém splývalo.
+#
+# Přepíná se přes prefers-color-scheme. Streamlit motiv do stránky
+# nedává a ve výchozím nastavení ho přebírá od systému (projekt nemá
+# .streamlit/config.toml, který by to přebil), takže to spolu sedí
+# a CSS navíc reaguje bez reruns.
 #
 # Čeká na potvrzení má vlastní jantarovou barvu i v pohledu hosta.
 # Původně vypadalo stejně jako Potvrzeno, protože pro hosta je den
@@ -69,25 +74,31 @@ VIEW_ADMIN = "admin"   # barevný přehled obsazenosti pro správce
 # nepotvrzená rezervace znamená zákazníka, kterého je možné urgovat.
 PALETTE_CSS = """
 .stApp {
-    --cal-free: rgba(100, 116, 139, .12);
-    --cal-busy: rgba(244, 63, 94, .20);
+    --cal-free: #f1f5f9;
+    --cal-pending: #fde68a;
+    --cal-busy: #fecdd3;
+    --cal-past: #e2e8f0;
+    --cal-day-text: #0f172a;
+    --cal-past-text: #94a3b8;
     --cal-busy-text: #9f1239;
-    --cal-pending: rgba(245, 158, 11, .24);
     --cal-pending-text: #92400e;
     --cal-accent: #4f46e5;
-    --cal-accent-soft: rgba(79, 70, 229, .20);
-    --cal-hover: rgba(79, 70, 229, .16);
+    --cal-accent-soft: #c7d2fe;
+    --cal-hover: #cbd5e1;
 }
 @media (prefers-color-scheme: dark) {
     .stApp {
-        --cal-free: rgba(148, 163, 184, .16);
-        --cal-busy: rgba(251, 113, 133, .34);
-        --cal-busy-text: #fecdd3;
-        --cal-pending: rgba(251, 191, 36, .34);
-        --cal-pending-text: #fde68a;
-        --cal-accent: #818cf8;
-        --cal-accent-soft: rgba(129, 140, 248, .34);
-        --cal-hover: rgba(129, 140, 248, .26);
+        --cal-free: #cbd5e1;
+        --cal-pending: #fcd34d;
+        --cal-busy: #fda4af;
+        --cal-past: #1e293b;
+        --cal-day-text: #0f172a;
+        --cal-past-text: #64748b;
+        --cal-busy-text: #881337;
+        --cal-pending-text: #78350f;
+        --cal-accent: #6366f1;
+        --cal-accent-soft: #a5b4fc;
+        --cal-hover: #f1f5f9;
     }
 }
 """
@@ -148,6 +159,18 @@ def _day_css(today, view=VIEW_GUEST):
             margin-left: auto !important;
             margin-right: auto !important;
         }
+        /* Blok obou měsíců a řádek se šipkami drží stejnou šířku a
+           stojí uprostřed. Bez toho by byly šipky roztažené přes celé
+           okno, tedy kus od mřížky, a měsíce by se rozutekly každý do
+           své poloviny stránky. */
+        [data-testid="stHorizontalBlock"]:has([class*="st-key-day-"]):has(
+            [data-testid="stHorizontalBlock"]
+        ),
+        [data-testid="stHorizontalBlock"]:has(.st-key-nav_prev) {
+            max-width: 72rem;
+            margin-left: auto !important;
+            margin-right: auto !important;
+        }
         /* Zvětšení jen tam, kde se opravdu dá najet myší. Na dotyku
            by hover po klepnutí zůstal viset a den by zůstal nafouklý. */
         @media (hover: hover) and (pointer: fine) {
@@ -195,22 +218,33 @@ def _day_css(today, view=VIEW_GUEST):
         [class*="st-key-day-empty-"] button {
             visibility: hidden !important;
         }
-        /* Šipky ◀ ▶ ↻ dostanou v poměru 1:6:1:1 na telefonu sotva
-           40 px. Výchozí vodorovné odsazení tlačítka je pak širší než
-           sloupec a znak se odřízne — proto ho tady rušíme. */
+        /* Šipky stojí v úzkém sloupci, takže výchozí vodorovné
+           odsazení tlačítka bývá širší než sloupec a znak se odřízne.
+           Proto ho rušíme a znak zvětšujeme ručně.
+
+           margin-top je dorovnání na střed mřížky. vertical_alignment
+           u sloupců vycentruje šipku na celý sloupec — jenže ten
+           obsahuje i nadpis měsíce a záhlaví dnů, takže jeho střed
+           leží nad středem mřížky. Přesné to být nemůže, výška se
+           mění podle toho, jestli má měsíc pět nebo šest týdnů. */
         .st-key-nav_prev button,
-        .st-key-nav_next button,
-        .st-key-nav_refresh button {
-            padding-left: 0 !important;
-            padding-right: 0 !important;
+        .st-key-nav_next button {
+            padding: 0 !important;
             min-width: 0 !important;
             overflow: visible !important;
+            height: 3rem !important;
+            min-height: 3rem !important;
+            font-size: 1.5rem !important;
+            line-height: 1 !important;
+            border-radius: 999px !important;
+            margin-top: 2.8rem !important;
         }
         .st-key-nav_prev button p,
-        .st-key-nav_next button p,
-        .st-key-nav_refresh button p {
+        .st-key-nav_next button p {
             overflow: visible !important;
             text-overflow: clip !important;
+            font-size: 1.5rem !important;
+            line-height: 1 !important;
         }
         /* wrap=False u st.columns zastaví skládání sloupců pod sebe,
            ale zároveň jim dá min-width: 8rem (128 px). Sedm dnů by pak
@@ -222,8 +256,12 @@ def _day_css(today, view=VIEW_GUEST):
             > [data-testid="stColumn"] {
             min-width: 0 !important;
         }
-        [data-testid="stHorizontalBlock"]:has([class*="st-key-day-"])
-            > [data-testid="stColumn"] {
+        /* Stejný podíl šířky patří jen dnům v týdnu. Řádek s měsíci
+           obsahuje dny taky, ale tam jsou krajní sloupce úzké šipky —
+           kdyby dostaly stejný podíl, roztáhly by se na šířku měsíce. */
+        [data-testid="stHorizontalBlock"]:has([class*="st-key-day-"]):not(
+            :has([data-testid="stHorizontalBlock"])
+        ) > [data-testid="stColumn"] {
             flex: 1 1 0 !important;
         }
         @media (max-width: 640px) {
@@ -266,6 +304,15 @@ def _admin_rules():
         "}"
     ]
 
+    # Minulost se tady jen ztlumí a barvu si nechá. Pro majitele je
+    # historie pobytů užitečná informace a odbarvit ji by znamenalo
+    # zahodit ji.
+    rules.append(
+        '[class*="-old"] button {'
+        "opacity: .45 !important;"
+        "}"
+    )
+
     # Devět kombinací dopoledne × odpoledne.
     for morning in STATES:
         for afternoon in STATES:
@@ -278,16 +325,6 @@ def _admin_rules():
                 f"}}"
             )
 
-    # Minulé dny jsou tlumené, ať je na první pohled vidět,
-    # že se na ně nedá kliknout.
-    rules.append(
-        f'[class*="-{PAST}-{PAST}-"] button {{'
-        f"background: {COLORS[PAST]} !important;"
-        "background-clip: content-box !important;"
-        "opacity: .4 !important;"
-        "}"
-    )
-
     return rules
 
 
@@ -298,15 +335,15 @@ def _guest_rules():
     bez rámečku a bez výplně. Rámeček kolem každého dne je přesně to,
     co z kalendáře dělá tabulku.
 
-    Rozlišují se tři stavy, každý svou barvou z palety:
+    Stav nese barva výplně, nic víc:
 
-        volno            břidlicová, decentní podklad
+        volno             břidlicová, decentní podklad
         čeká na potvrzení jantarová, termín „na dotaz“
-        potvrzeno        růžová, k tomu přeškrtnuté číslo
+        potvrzeno         růžová
+        už proběhlo       plná šedá
 
-    Přeškrtnutí dostane jen den, který je celý potvrzený. Den, kde
-    figuruje nepotvrzená rezervace, zůstane nepřeškrtnutý schválně —
-    není to hotová věc a přeškrtnutí by tvrdilo víc, než je pravda.
+    Text se nepřeškrtává. Podbarvení informaci nese samo a škrtání
+    by se pletlo mezi „obsazeno“ a „už proběhlo“.
     """
     fill = {
         FREE: GUEST_FREE,
@@ -323,7 +360,7 @@ def _guest_rules():
         '[class*="st-key-day-"] button {'
         f"background: {GUEST_FREE} !important;"
         "background-clip: content-box !important;"
-        "color: inherit !important;"
+        "color: var(--cal-day-text) !important;"
         "text-shadow: none !important;"
         "}"
     ]
@@ -344,23 +381,25 @@ def _guest_rules():
                 f"}}"
             )
 
-    # Celý den potvrzený: přeškrtnuté číslo. Tohle je hlavní signál,
-    # plocha je jen doplněk.
+    # Celý den potvrzený: číslo v barvě stavu. Neškrtáme — podbarvení
+    # nese informaci samo a přeškrtnutí by se navíc pletlo s dny,
+    # které už proběhly.
     rules.append(
         f'[class*="-{STATUS_CONFIRMED}-{STATUS_CONFIRMED}-"] button p {{'
-        "text-decoration: line-through !important;"
         "color: var(--cal-busy-text) !important;"
-        "opacity: .85 !important;"
+        "opacity: .95 !important;"
         "}"
     )
 
     # Kdekoli figuruje nepotvrzená rezervace, drží číslo jantarovou
     # barvu a zůstává nepřeškrtnuté — termín visí ve vzduchu.
-    for other in states:
-        for pair in (
-            (STATUS_PENDING, other),
-            (other, STATUS_PENDING),
-        ):
+    pending_pairs = {
+        pair
+        for other in states
+        for pair in ((STATUS_PENDING, other), (other, STATUS_PENDING))
+    }
+
+    for pair in sorted(pending_pairs):
             rules.append(
                 f'[class*="-{pair[0]}-{pair[1]}-"] button p {{'
                 "text-decoration: none !important;"
@@ -369,10 +408,24 @@ def _guest_rules():
                 "}"
             )
 
-    # Minulé dny se jen ztlumí.
+    # Minulé dny poznáš podle barvy čtverečku, ne podle textu.
+    # Přeškrtnuté a ztlumené číslo se ukázalo jako moc slabý signál —
+    # na plný měsíc se přehlédne. Plná šedá výplň přebije gradient
+    # stavu, takže celá odžitá část měsíce tvoří souvislý šedý blok,
+    # který se od zbytku liší na první pohled.
     rules.append(
-        f'[class*="-{PAST}-{PAST}-"] button {{'
-        "opacity: .25 !important;"
+        '[class*="-old"] button {'
+        "background: var(--cal-past) !important;"
+        "background-clip: content-box !important;"
+        "opacity: 1 !important;"
+        "filter: none !important;"
+        "}"
+    )
+    rules.append(
+        '[class*="-old"] button p {'
+        "color: var(--cal-past-text) !important;"
+        "text-decoration: none !important;"
+        "opacity: 1 !important;"
         "}"
     )
 
@@ -434,25 +487,17 @@ def _shared_state_rules(today):
             "}"
         )
 
-    # Dnešek pozná tečka pod číslem. Rámeček by do mřížky bez rámečků
-    # nepatřil a pletl by se s vybraným termínem.
+    # Dnešek dostane prstenec v barvě výběru. Tečka pod číslem se
+    # ukázala jako málo — na plný měsíc se snadno přehlédne, a přitom
+    # je to jediný bod, od kterého se dá v kalendáři zorientovat.
     rules.append(
-        f'[class*="st-key-day-{today.isoformat()}-"] button p {{'
-        "font-weight: 800 !important;"
+        f'[class*="st-key-day-{today.isoformat()}-"] button {{'
+        "box-shadow: inset 0 0 0 2px var(--cal-accent) !important;"
         "}"
     )
     rules.append(
-        f'[class*="st-key-day-{today.isoformat()}-"] button::after {{'
-        'content: "";'
-        "position: absolute;"
-        "left: 50%;"
-        "bottom: 5px;"
-        "width: 4px;"
-        "height: 4px;"
-        "margin-left: -2px;"
-        "border-radius: 50%;"
-        "background: currentColor;"
-        "opacity: .75;"
+        f'[class*="st-key-day-{today.isoformat()}-"] button p {{'
+        "font-weight: 800 !important;"
         "}"
     )
 
@@ -555,11 +600,48 @@ def half_text(res, view):
     return HALF_LABELS[res["status"]]
 
 
-def _tooltip(day, morning, afternoon, disabled, view=VIEW_GUEST):
-    parts = [day.strftime("%d.%m.%Y")]
+def occupancy_text(morning, afternoon, view=VIEW_GUEST):
+    """Shrne obsazenost dne do jedné věty.
 
-    parts.append(f"do 11:00 {half_text(morning, view)}")
-    parts.append(f"od 15:00 {half_text(afternoon, view)}")
+    Většinu dnů jde popsat jedním slovem — celý je volný, nebo celý
+    zabraný. Na půlky se den dělí jen tam, kde pobyt začíná nebo končí,
+    a teprve tam má smysl psát „volno od 15:00“. Rozepisovat obě půlky
+    u každého dne zaplavilo nápovědu textem, ve kterém se ztratilo to
+    podstatné.
+    """
+    if view == VIEW_ADMIN:
+        return " · ".join(
+            f"{kdy} {half_text(res, view)}"
+            for kdy, res in (("do 11:00", morning), ("od 15:00", afternoon))
+        )
+
+    if morning is None and afternoon is None:
+        return "volno"
+
+    # Den, kdy někdo odjíždí — dopoledne ještě obsazeno, pak volno.
+    if afternoon is None:
+        return "volno od 15:00"
+
+    # Den, kdy někdo přijíždí — do 11:00 ještě volno.
+    if morning is None:
+        return "volno do 11:00"
+
+    if morning["status"] == afternoon["status"]:
+        return HALF_LABELS[morning["status"]]
+
+    # Obě půlky zabrané, ale každá jinak — typicky odjezd potvrzeného
+    # hosta a příjezd toho, kdo se teprve ptá.
+    return (
+        f"do 11:00 {HALF_LABELS[morning['status']]}"
+        f" · od 15:00 {HALF_LABELS[afternoon['status']]}"
+    )
+
+
+def _tooltip(day, morning, afternoon, disabled, view=VIEW_GUEST):
+    parts = [
+        day.strftime("%d.%m.%Y"),
+        occupancy_text(morning, afternoon, view),
+    ]
 
     if disabled:
         parts.append("nelze vybrat")
@@ -574,20 +656,13 @@ def month_range(start, count):
 
 
 def render_month(
-    year, month, reservations, sel_from, sel_to, today, show_title=True,
-    view=VIEW_GUEST,
+    year, month, reservations, sel_from, sel_to, today, view=VIEW_GUEST,
 ):
-    """Vykreslí jeden měsíc. Vrátí datum, na které uživatel klikl, jinak None.
-
-    `show_title` vypne nadpis nad mřížkou. Když je vidět jediný měsíc,
-    říká totéž popisek mezi šipkami a na telefonu je každý ušetřený
-    řádek znát.
-    """
-    if show_title:
-        st.html(
-            f'<div class="cal-month-title">'
-            f"{MONTH_NAMES[month - 1]} {year}</div>"
-        )
+    """Vykreslí jeden měsíc. Vrátí datum, na které uživatel klikl, jinak None."""
+    st.html(
+        f'<div class="cal-month-title">'
+        f"{MONTH_NAMES[month - 1]} {year}</div>"
+    )
     st.html(
         '<div class="cal-weekdays">'
         + "".join(f"<div>{name}</div>" for name in WEEKDAY_NAMES)
@@ -638,7 +713,12 @@ def render_month(
             # ale klepnout na něj musí jít — na dotyku se jinak není jak
             # dozvědět, kdo ho zabírá. Stránka na takový klik jen ukáže
             # detail a výběr nechá být. Zamčené jsou tak už jen minulé dny.
-            fully_booked = morning is not None and afternoon is not None
+            # Nevybrat se dá jen den, jehož obě půlky drží potvrzená
+            # rezervace. Nepotvrzená termín neblokuje.
+            fully_booked = all(
+                res is not None and res["status"] == STATUS_CONFIRMED
+                for res in (morning, afternoon)
+            )
             disabled = day < today
 
             # Minulý den bez rezervace vykreslíme šedě. Minulý den
@@ -661,9 +741,16 @@ def render_month(
             elif pick == PICK_INSIDE:
                 morning_name = afternoon_name = SELECTED
 
+            # Značka „už bylo“ musí být v klíči zvlášť. Dřív se minulost
+            # poznala jen podle toho, že obě půlky dostaly stav PAST —
+            # jenže ten se přiřadí jen dni, který je minulý a zároveň
+            # volný. Minulý den s rezervací si nechal barvu svého stavu
+            # a od budoucího se nedal rozeznat.
+            past_mark = "-old" if day < today else ""
+
             key = (
                 f"day-{day.isoformat()}"
-                f"-{morning_name}-{afternoon_name}-{pick}"
+                f"-{morning_name}-{afternoon_name}-{pick}{past_mark}"
             )
 
             with cols[weekday]:
@@ -688,27 +775,52 @@ def render_month(
 
 def render_calendar(
     months, reservations, sel_from, sel_to, today, columns=2,
-    view=VIEW_GUEST,
+    view=VIEW_GUEST, nav_prev=None, nav_next=None,
 ):
-    """Vykreslí mřížku měsíců. Vrátí datum, na které uživatel klikl."""
+    """Vykreslí mřížku měsíců. Vrátí datum, na které uživatel klikl.
+
+    `nav_prev` a `nav_next` jsou funkce, které vykreslí šipky pro
+    listování. Nekreslí se nad kalendářem, ale do krajních sloupců
+    téhož řádku, takže stojí přímo u mřížky a svisle uprostřed.
+    Vlastní řádek nad kalendářem je držel daleko od toho, čím se
+    listuje, a na širokém displeji se rozjely ke krajům okna.
+
+    Šipky si aplikace předává jako funkce, protože posun měsíců patří
+    stránce — ta drží stav a ví, kam až se smí listovat. Kalendář jim
+    jen dá místo.
+    """
     st.html(_day_css(today, view))
 
     clicked = None
 
     for row_start in range(0, len(months), columns):
         row = months[row_start:row_start + columns]
-        cols = st.columns(columns, gap="medium")
+
+        # ◀ | měsíc | (měsíc) | ▶
+        cols = st.columns(
+            [2] + [14] * len(row) + [2],
+            gap="medium",
+            vertical_alignment="center",
+            wrap=False,
+        )
+
+        with cols[0]:
+            if nav_prev is not None:
+                nav_prev()
 
         for index, (year, month) in enumerate(row):
-            with cols[index]:
+            with cols[1 + index]:
                 result = render_month(
                     year, month, reservations, sel_from, sel_to, today,
-                    show_title=columns > 1,
                     view=view,
                 )
 
                 if result is not None:
                     clicked = result
+
+        with cols[-1]:
+            if nav_next is not None:
+                nav_next()
 
     return clicked
 
@@ -725,6 +837,7 @@ def render_legend(view=VIEW_GUEST):
         items = [
             (GUEST_PENDING, "Na dotaz"),
             (GUEST_BUSY, "Obsazeno"),
+            ("var(--cal-past)", "Už proběhlo"),
             (ACCENT, "Váš termín"),
         ]
     else:

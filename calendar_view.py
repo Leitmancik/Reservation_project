@@ -90,6 +90,7 @@ PALETTE_CSS = """
     --cal-past: #e2e8f0;
     --cal-day-text: #0f172a;
     --cal-past-text: #94a3b8;
+    --cal-split: rgba(15, 23, 42, .65);
     --cal-busy-text: #9f1239;
     --cal-pending-text: #92400e;
     --cal-accent: #4f46e5;
@@ -104,6 +105,7 @@ PALETTE_CSS = """
         --cal-past: #1e293b;
         --cal-day-text: #0f172a;
         --cal-past-text: #64748b;
+        --cal-split: rgba(15, 23, 42, .65);
         --cal-busy-text: #881337;
         --cal-pending-text: #78350f;
         --cal-accent: #6366f1;
@@ -319,7 +321,59 @@ def _admin_rules():
     # zahodit ji.
     rules.append(
         '[class*="-old"] button {'
-        "opacity: .45 !important;"
+        "opacity: .65 !important;"
+        "}"
+    )
+
+    # Den, kdy jeden host odjíždí a druhý přijíždí, se pozná podle
+    # zářezů v rozích. Když mají oba stejný stav, obarví se obě půlky
+    # stejnou barvou a úhlopříčka zmizí — den pak vypadá jako jedna
+    # souvislá rezervace.
+    #
+    # Zářezy sedí na koncích úhlopříčky, tedy v levém dolním a pravém
+    # horním rohu, a střed nechávají volný. Linka přes celý čtvereček
+    # vypadala jako přeškrtnuté číslo.
+    #
+    # Kreslí se pseudoelementy, ne do pozadí: výplň půlek dne je
+    # gradient a zkratka background by ho přepsala.
+    #
+    # Jen pro majitele. Hosta nezajímá, kdo se s kým střídá, a v jeho
+    # pohledu by to byl další symbol navíc.
+    zarez = (
+        "content: '';"
+        "position: absolute;"
+        "width: 38%;"
+        "height: 38%;"
+        "pointer-events: none;"
+        "background: linear-gradient(135deg,"
+        " transparent calc(50% - 1px),"
+        " var(--cal-split) calc(50% - 1px),"
+        " var(--cal-split) calc(50% + 1px),"
+        " transparent calc(50% + 1px));"
+    )
+
+    rules.append(
+        '[class*="-swap"] button::before {'
+        + zarez
+        + "top: 4px; right: 4px;"
+        "}"
+    )
+    rules.append(
+        '[class*="-swap"] button::after {'
+        + zarez
+        + "bottom: 4px; left: 4px;"
+        "}"
+    )
+
+    # Minulý den, na kterém nikdo nebyl, dostane světlou šeď. Bez toho
+    # zůstal úplně bez výplně — v mřížce samých sytých barev z něj byla
+    # jen slabá číslice na pozadí stránky a v tmavém motivu se ztrácel
+    # docela. Šedá ho drží ve stejné řadě jako ostatní dny a zároveň
+    # říká, že se v něm nic nedělo.
+    rules.append(
+        f'[class*="-{PAST}-{PAST}-"] button {{'
+        f"background: {COLORS[PAST]} !important;"
+        "background-clip: content-box !important;"
         "}"
     )
 
@@ -757,9 +811,22 @@ def render_month(
             # a od budoucího se nedal rozeznat.
             past_mark = "-old" if day < today else ""
 
+            # Den, kdy jeden host odjíždí a druhý přijíždí. Když mají
+            # oba stejný stav, obarví se obě půlky stejnou barvou a
+            # úhlopříčka zmizí — den pak vypadá jako jedna souvislá
+            # rezervace. Proto se do něj kreslí dělicí linka.
+            swap_mark = (
+                "-swap"
+                if morning is not None
+                and afternoon is not None
+                and str(morning["id"]) != str(afternoon["id"])
+                else ""
+            )
+
             key = (
                 f"day-{day.isoformat()}"
-                f"-{morning_name}-{afternoon_name}-{pick}{past_mark}"
+                f"-{morning_name}-{afternoon_name}-{pick}"
+                f"{swap_mark}{past_mark}"
             )
 
             with cols[weekday]:

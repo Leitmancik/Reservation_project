@@ -103,6 +103,10 @@ def _handle_click(day, reservations, view=VIEW_GUEST):
     # nápověda tlačítka se ukáže jen pod myší.
     st.session_state.detail_day = day
 
+    # V přehledu se nerezervuje, takže klik jen otevře detail.
+    if view == VIEW_ADMIN:
+        return
+
     # Blokuje jen den, jehož obě půlky drží potvrzená rezervace.
     # Nepotvrzená je zatím poptávka, ne překážka — jinak by „na dotaz“
     # nedávalo smysl, protože by se nedalo zeptat.
@@ -218,12 +222,58 @@ def _nav_arrows():
     return dozadu, dopredu
 
 
-def _day_detail(reservations, view=VIEW_GUEST):
-    """Vypíše, kdo zabírá den, na který uživatel klepl.
+STATUS_LABELS = {
+    storage.STATUS_PENDING: "Čeká na potvrzení",
+    storage.STATUS_CONFIRMED: "Potvrzeno",
+}
 
-    Na desktopu totéž říká nápověda pod myší, jenže ta se na dotykovém
+
+def _admin_detail(day, morning, afternoon):
+    """Vypíše celé rezervace, které se daného dne týkají.
+
+    Majitel od přehledu chce vědět, kdo tam je a jak ho zastihnout,
+    ne jen že je obsazeno. Když jeden host odjíždí a druhý přijíždí,
+    jsou to dvě různé rezervace a vypíšou se obě; jinak by se tatáž
+    rezervace opakovala dvakrát, proto se odstraňují duplicity.
+    """
+    videno = []
+
+    for res in (morning, afternoon):
+        if res is not None and not any(
+            str(res["id"]) == str(v["id"]) for v in videno
+        ):
+            videno.append(res)
+
+    for res in videno:
+        noci = (res["date_to"] - res["date_from"]).days
+
+        radky = [
+            f"**{res['first_name']} {res['last_name']}** — "
+            f"{STATUS_LABELS[res['status']]}",
+            f"{res['date_from'].strftime('%d.%m.%Y')} od 15:00 → "
+            f"{res['date_to'].strftime('%d.%m.%Y')} do 11:00 "
+            f"({nights_label(noci)})",
+            f"{res['email']}",
+        ]
+
+        if res.get("price") is not None:
+            radky.append(f"Cena pobytu: **{format_price(res['price'])}**")
+
+        st.markdown("  \n".join(radky))
+
+        if res is not videno[-1]:
+            st.divider()
+
+
+def _day_detail(reservations, view=VIEW_GUEST):
+    """Vypíše, co se s daným dnem děje.
+
+    Hostovi stačí, že je den zabraný. Majitel v přehledu potřebuje
+    celou rezervaci — jméno, kontakt, termín i cenu.
+
+    Na desktopu říká totéž nápověda pod myší, jenže ta se na dotykovém
     displeji nezobrazí. Bez tohohle panelu by na telefonu zůstala jen
-    barva čtverečku a nedalo by se zjistit, kdo je kde ubytovaný.
+    barva čtverečku.
     """
     day = st.session_state.get("detail_day")
 
@@ -232,19 +282,19 @@ def _day_detail(reservations, view=VIEW_GUEST):
 
     morning, afternoon = half_states(day, reservations)
 
-    # U volného dne by panel nic nepřidal — vybraný termín ukazuje
-    # pruh nad kalendářem. Tím se detail sám uklidí, jakmile si
-    # uživatel vybere volný den.
+    # U volného dne by panel nic nepřidal.
     if morning is None and afternoon is None:
         return
 
-    def half_line(res, when):
-        return f"**{when}** — {half_text(res, view)}"
-
     with st.container(border=True):
         st.markdown(f"**{day.strftime('%d.%m.%Y')}**")
-        st.markdown(half_line(morning, "do 11:00"))
-        st.markdown(half_line(afternoon, "od 15:00"))
+
+        if view == VIEW_ADMIN:
+            _admin_detail(day, morning, afternoon)
+            return
+
+        st.markdown(f"**do 11:00** — {half_text(morning, view)}")
+        st.markdown(f"**od 15:00** — {half_text(afternoon, view)}")
 
         if _both_halves_confirmed(morning, afternoon):
             st.caption(
@@ -526,7 +576,8 @@ def render():
 
     today = date.today()
 
-    _selection_bar(prices)
+    if view == VIEW_GUEST:
+        _selection_bar(prices)
 
     visible = _months_visible()
 
@@ -556,19 +607,24 @@ def render():
 
     _day_detail(reservations, view)
 
-    # Rychlé délky pobytu dávají smysl jen ve chvíli, kdy je vybraný
-    # příjezd a chybí odjezd.
-    if (
-        st.session_state.sel_from is not None
-        and st.session_state.sel_to is None
-    ):
-        _quick_lengths(reservations, prices)
+    # Přehled obsazenosti je jen ke koukání — rezervovat se v něm
+    # nedá, od toho je pohled hosta. Rychlé délky pobytu i formulář
+    # by tu jen zabíraly místo a mátly.
+    if view == VIEW_GUEST:
+        # Rychlé délky pobytu dávají smysl jen ve chvíli, kdy je
+        # vybraný příjezd a chybí odjezd.
+        if (
+            st.session_state.sel_from is not None
+            and st.session_state.sel_to is None
+        ):
+            _quick_lengths(reservations, prices)
 
     st.html(render_legend(view))
 
-    st.divider()
+    if view == VIEW_GUEST:
+        st.divider()
 
-    _reservation_form(reservations, prices)
+        _reservation_form(reservations, prices)
 
 
 def _shift_start(start, offset):

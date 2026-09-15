@@ -30,6 +30,16 @@ MONTH_NAMES = [
 
 WEEKDAY_NAMES = ["Po", "Út", "St", "Čt", "Pá", "So", "Ne"]
 
+# Každý měsíc se kreslí na pevných šest týdnů, i když poslední zůstane
+# prázdný. Bez toho měl únor čtyři řádky a březen šest, takže vedle
+# sebe měly měsíce různou výšku — sloupce se vycentrují každý zvlášť
+# a nadpisy si přestaly odpovídat. Navíc při listování poskakoval
+# zbytek stránky nahoru a dolů.
+#
+# Šest stačí vždycky: nejhorší případ je 31denní měsíc začínající
+# v neděli, tedy 6 prázdných polí + 31 dnů = 37 ze 42 míst.
+WEEKS_SHOWN = 6
+
 FREE = "free"
 PAST = "past"           # den, který už byl — nejde ho vybrat
 SELECTED = "selected"   # půlka dne, kterou zabírá právě vybíraný pobyt
@@ -167,7 +177,7 @@ def _day_css(today, view=VIEW_GUEST):
             [data-testid="stHorizontalBlock"]
         ),
         [data-testid="stHorizontalBlock"]:has(.st-key-nav_prev) {
-            max-width: 72rem;
+            max-width: 80rem;
             margin-left: auto !important;
             margin-right: auto !important;
         }
@@ -673,11 +683,10 @@ def render_month(
 
     clicked = None
     day_number = 1
-    week_index = 0
 
     # Kalendář kreslíme po týdnech, aby dny seděly pod správnými
     # názvy dnů i v měsíci, který nezačíná v pondělí.
-    while day_number <= days_in_month:
+    for week_index in range(WEEKS_SHOWN):
         # wrap=False: bez toho Streamlit pod ~640 px přeskládá
         # každý sloupec pod sebe a ze sedmi dnů týdne udělá sloupec.
         # gap=0: dny se musí dotýkat, jinak se pruh vybraného
@@ -768,8 +777,6 @@ def render_month(
 
             day_number += 1
 
-        week_index += 1
-
     return clicked
 
 
@@ -796,9 +803,27 @@ def render_calendar(
     for row_start in range(0, len(months), columns):
         row = months[row_start:row_start + columns]
 
-        # ◀ | měsíc | (měsíc) | ▶
+        # ◀ | měsíc | mezera | měsíc | ▶
+        #
+        # Mezeru dělá prázdný sloupec, ne gap. Gap je jedna ze tří
+        # předvolených velikostí a „medium“ byla na oddělení dvou
+        # měsíců málo — splývaly v jednu mřížku čtrnácti sloupců.
+        # Takhle je mezera přesně daná a nezávisí na tom, jak si ji
+        # Streamlit vyloží.
+        spec = [2]
+        mesice = []
+
+        for index in range(len(row)):
+            if index:
+                spec.append(3)
+
+            mesice.append(len(spec))
+            spec.append(14)
+
+        spec.append(2)
+
         cols = st.columns(
-            [2] + [14] * len(row) + [2],
+            spec,
             gap="medium",
             vertical_alignment="center",
             wrap=False,
@@ -809,7 +834,7 @@ def render_calendar(
                 nav_prev()
 
         for index, (year, month) in enumerate(row):
-            with cols[1 + index]:
+            with cols[mesice[index]]:
                 result = render_month(
                     year, month, reservations, sel_from, sel_to, today,
                     view=view,
@@ -833,11 +858,14 @@ def render_legend(view=VIEW_GUEST):
     """
     # „Na dotaz“ je nepotvrzená rezervace. Hostovi to říká, že termín
     # ještě není definitivní, a majiteli, že je koho urgovat.
+    #
+    # Minulé dny ve vysvětlivkách nejsou schválně: že termín už
+    # proběhl, je z kalendáře zřejmé a hosta to nezajímá — vybírá si
+    # z toho, co teprve bude.
     if view == VIEW_GUEST:
         items = [
             (GUEST_PENDING, "Na dotaz"),
             (GUEST_BUSY, "Obsazeno"),
-            ("var(--cal-past)", "Už proběhlo"),
             (ACCENT, "Váš termín"),
         ]
     else:

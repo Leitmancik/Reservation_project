@@ -7,7 +7,7 @@ import streamlit as st
 
 import storage
 from calendar_view import COLORS
-from ui import nights_label, set_flash, show_flash
+from ui import format_price, nights_label, set_flash, show_flash
 
 STATUS_LABELS = {
     storage.STATUS_PENDING: "Čeká na potvrzení",
@@ -25,6 +25,7 @@ def _to_dataframe(reservations):
                 "Příjezd": res["date_from"].strftime("%d.%m.%Y"),
                 "Odjezd": res["date_to"].strftime("%d.%m.%Y"),
                 "Nocí": (res["date_to"] - res["date_from"]).days,
+                "Cena celkem": res.get("price"),
                 "Stav": STATUS_LABELS[res["status"]],
                 "Vytvořeno": res["created_at"],
             }
@@ -54,11 +55,18 @@ def _render_row(res):
 
             nights = (res["date_to"] - res["date_from"]).days
 
-            st.caption(
+            detail = (
                 f"{res['date_from'].strftime('%d.%m.%Y')} od 15:00 → "
                 f"{res['date_to'].strftime('%d.%m.%Y')} do 11:00 "
                 f"({nights_label(nights)}) &nbsp;·&nbsp; {res['email']}"
             )
+
+            if res.get("price") is not None:
+                detail += (
+                    f" &nbsp;·&nbsp; **{format_price(res['price'])}**"
+                )
+
+            st.caption(detail)
 
         with col_actions:
             if res["status"] == storage.STATUS_PENDING:
@@ -152,10 +160,18 @@ def render():
         r for r in reservations if r["status"] == storage.STATUS_CONFIRMED
     ]
 
-    col1, col2, col3 = st.columns(3)
+    # Tržbu počítáme jen z potvrzených rezervací — nepotvrzené ještě
+    # nejsou jisté a sčítat je dohromady by kreslilo lepší obrázek,
+    # než jaký je.
+    earned = sum(
+        r["price"] for r in confirmed if r.get("price") is not None
+    )
+
+    col1, col2, col3, col4 = st.columns(4)
     col1.metric("Celkem", len(reservations))
     col2.metric("Čeká na potvrzení", len(pending))
     col3.metric("Potvrzeno", len(confirmed))
+    col4.metric("Za potvrzené", format_price(earned) if earned else "—")
 
     st.divider()
 

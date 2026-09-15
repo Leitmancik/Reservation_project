@@ -46,6 +46,7 @@ HEADER = [
     "Stav",
     "ID",
     "Vytvořeno",
+    "Cena celkem",
 ]
 
 COL_ID = HEADER.index("ID") + 1
@@ -175,17 +176,40 @@ def _readable(error):
     return StorageError(f"Tabulka odpověděla chybou: {text[:200]}")
 
 
+def _last_column(count):
+    return chr(ord("A") + count - 1)
+
+
 def _ensure_header(worksheet):
-    """Doplní hlavičku, pokud tabulka ještě žádnou nemá."""
+    """Doplní hlavičku, případně dorovná sloupce přidané později.
+
+    Sloupce se dopisují jen na konec, takže se s existujícími daty
+    nemusí hýbat a nehrozí, že se řádky rozjedou.
+    """
     first_row = worksheet.row_values(1)
 
     if not first_row:
         worksheet.update(
-            range_name=f"A1:{chr(ord('A') + len(HEADER) - 1)}1",
+            range_name=f"A1:{_last_column(len(HEADER))}1",
             values=[HEADER],
         )
         worksheet.format(
-            f"A1:{chr(ord('A') + len(HEADER) - 1)}1",
+            f"A1:{_last_column(len(HEADER))}1",
+            {"textFormat": {"bold": True}},
+        )
+        return
+
+    if len(first_row) < len(HEADER):
+        missing = HEADER[len(first_row):]
+        start = _last_column(len(first_row) + 1)
+        end = _last_column(len(HEADER))
+
+        worksheet.update(
+            range_name=f"{start}1:{end}1",
+            values=[missing],
+        )
+        worksheet.format(
+            f"{start}1:{end}1",
             {"textFormat": {"bold": True}},
         )
 
@@ -247,6 +271,7 @@ def load_reservations():
                     str(row.get("Stav", "")).strip(), STATUS_PENDING
                 ),
                 "created_at": str(row.get("Vytvořeno", "")).strip(),
+                "price": _parse_price(row.get("Cena celkem")),
             }
         )
 
@@ -257,17 +282,17 @@ def _invalidate():
     _load_rows.clear()
 
 
-def add_reservation(first_name, last_name, email, date_from, date_to):
+def add_reservation(first_name, last_name, email, date_from, date_to, price=None):
     """Přidá rezervaci jako nový řádek ve stavu 'čeká na potvrzení'."""
     try:
-        _append(first_name, last_name, email, date_from, date_to)
+        _append(first_name, last_name, email, date_from, date_to, price)
     except gspread.exceptions.APIError as error:
         raise _readable(error)
 
     _invalidate()
 
 
-def _append(first_name, last_name, email, date_from, date_to):
+def _append(first_name, last_name, email, date_from, date_to, price):
     _worksheet().append_row(
         [
             first_name.strip(),
@@ -278,6 +303,7 @@ def _append(first_name, last_name, email, date_from, date_to):
             STATUS_TO_SHEET[STATUS_PENDING],
             uuid.uuid4().hex[:12],
             datetime.now().isoformat(timespec="seconds"),
+            "" if price is None else price,
         ],
         value_input_option="USER_ENTERED",
     )

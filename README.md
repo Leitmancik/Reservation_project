@@ -90,8 +90,14 @@ Rezervace se ukládají do Google Sheets. Tabulka má tyhle sloupce:
 | Stav | `Čeká na potvrzení` nebo `Potvrzeno` |
 | ID | interní identifikátor řádku |
 | Vytvořeno | kdy rezervace přišla |
+| Cena celkem | částka podle ceníku v okamžiku rezervace |
 
-Prvních pět sloupců je pro člověka, poslední tři potřebuje aplikace:
+Cena se ukládá taková, jaká platila v okamžiku rezervace — pozdější
+změna ceníku už s ní nehne, aby zůstalo dohledatelné, na čem jste se
+s hostem domluvili. U rezervací vytvořených dřív, než sloupec vznikl,
+zůstane prázdný.
+
+Prvních pět sloupců je pro člověka, ostatní potřebuje aplikace:
 podle `ID` najde řádek při potvrzování a mazání, `Stav` drží potvrzení.
 Do tabulky jde psát i ručně — jen ty tři sloupce nemazat.
 

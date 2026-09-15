@@ -96,9 +96,16 @@ def refresh():
     st.session_state.pop("_prices_cache", None)
 
 
-def add_reservation(first_name, last_name, email, date_from, date_to):
-    backend().add_reservation(first_name, last_name, email, date_from, date_to)
+def add_reservation(first_name, last_name, email, date_from, date_to, price=None):
+    backend().add_reservation(
+        first_name, last_name, email, date_from, date_to, price
+    )
     refresh()
+
+
+def stores_price():
+    """Ukládá současné úložiště i cenu rezervace?"""
+    return backend() is not storage_appsscript
 
 
 def set_status(reservation_id, status):

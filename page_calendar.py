@@ -322,19 +322,30 @@ def _reservation_form(reservations, prices):
                 )
                 return
 
+            # Cenu ukládáme takovou, jaká platí teď — aby pozdější
+            # změna ceníku nepřepsala, na čem jsme se s hostem domluvili.
+            total, _ = pricing.stay_total(sel_from, sel_to, prices)
+
             storage.add_reservation(
-                first_name, last_name, email, sel_from, sel_to
+                first_name, last_name, email, sel_from, sel_to, total
             )
         except storage.StorageError as error:
             st.error(f"Rezervaci se nepodařilo uložit. {error}")
             return
 
-    set_flash(
-        "success",
+    message = (
         f"Rezervace uložena: {first_name.strip()} {last_name.strip()}, "
         f"{sel_from.strftime('%d.%m.%Y')} – {sel_to.strftime('%d.%m.%Y')} "
-        f"({nights_label(nights)}). Čeká na potvrzení — "
-        "potvrdit ji můžeš na stránce Rezervace.",
+        f"({nights_label(nights)})"
+    )
+
+    if total is not None:
+        message += f" za {format_price(total)}"
+
+    set_flash(
+        "success",
+        message + ". Čeká na potvrzení — potvrdit ji můžeš na stránce "
+        "Rezervace.",
     )
 
     _clear_selection()

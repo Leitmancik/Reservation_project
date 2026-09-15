@@ -37,10 +37,20 @@ def init_db():
                 date_from  TEXT NOT NULL,
                 date_to    TEXT NOT NULL,
                 status     TEXT NOT NULL,
-                created_at TEXT NOT NULL
+                created_at TEXT NOT NULL,
+                price      REAL
             )
             """
         )
+
+        # Sloupec přibyl později — u starších databází ho dorovnáme.
+        columns = [
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(reservations)")
+        ]
+
+        if "price" not in columns:
+            conn.execute("ALTER TABLE reservations ADD COLUMN price REAL")
 
 
 def load_reservations():
@@ -60,12 +70,13 @@ def load_reservations():
             "date_to": date.fromisoformat(row["date_to"]),
             "status": row["status"],
             "created_at": row["created_at"],
+            "price": row["price"],
         }
         for row in rows
     ]
 
 
-def add_reservation(first_name, last_name, email, date_from, date_to):
+def add_reservation(first_name, last_name, email, date_from, date_to, price=None):
     """Přidá novou rezervaci ve stavu 'pending' (čeká na potvrzení)."""
     from datetime import datetime
 
@@ -74,8 +85,8 @@ def add_reservation(first_name, last_name, email, date_from, date_to):
             """
             INSERT INTO reservations
                 (first_name, last_name, email, date_from, date_to,
-                 status, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+                 status, created_at, price)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 first_name.strip(),
@@ -85,6 +96,7 @@ def add_reservation(first_name, last_name, email, date_from, date_to):
                 date_to.isoformat(),
                 STATUS_PENDING,
                 datetime.now().isoformat(timespec="seconds"),
+                price,
             ),
         )
 

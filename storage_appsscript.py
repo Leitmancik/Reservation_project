@@ -192,6 +192,7 @@ def load_reservations():
                     str(row.get("Stav", "")).strip(), STATUS_PENDING
                 ),
                 "created_at": str(row.get("Vytvořeno", "")).strip(),
+                "price": None,
             }
         )
 
@@ -202,7 +203,10 @@ def _invalidate():
     _load_rows.clear()
 
 
-def add_reservation(first_name, last_name, email, date_from, date_to):
+def add_reservation(first_name, last_name, email, date_from, date_to, price=None):
+    # Skript v tabulce zapisuje pevný seznam sloupců, cenu tedy uložit
+    # neumí. Doplnit by ho šlo, ale vyžadovalo by to znovu nasadit
+    # webovou aplikaci — přes servisní účet cena funguje rovnou.
     # Identifikátor vyrábíme tady, ne v tabulce. Kdyby se odpověď
     # ztratila a požadavek se zopakoval, dorazí se stejným ID a skript
     # pozná, že řádek už založil — jinak by rezervace přibyla dvakrát.

@@ -34,64 +34,137 @@ FREE = "free"
 PAST = "past"           # den, který už byl — nejde ho vybrat
 SELECTED = "selected"   # půlka dne, kterou zabírá právě vybíraný pobyt
 
+# Paleta pohledu správce. Syté výplně schválně — stav má být čitelný
+# na první pohled přes celý měsíc. Odstíny jsou o stupeň světlejší než
+# základní, aby na tmavém pozadí neřezaly do očí.
 COLORS = {
     FREE: "#4ade80",
-    STATUS_PENDING: "#fb923c",
-    STATUS_CONFIRMED: "#ef4444",
+    STATUS_PENDING: "#fbbf24",
+    STATUS_CONFIRMED: "#f87171",
     PAST: "#94a3b8",
-    SELECTED: "#2563eb",
+    SELECTED: "#6366f1",
 }
+
+# Dva pohledy na tutéž mřížku. Klíč tlačítka nese stav obou půlek dne
+# i stav výběru, takže na přepnutí vzhledu stačí jiná sada pravidel —
+# kalendář se nikde nekreslí dvakrát.
+VIEW_GUEST = "guest"   # střídmý, pro hosta, který hledá volno
+VIEW_ADMIN = "admin"   # barevný přehled obsazenosti pro správce
+
+# Paleta pohledu hosta ve dvou variantách.
+#
+# Jedna sada barev nemůže obsloužit oba motivy. Poloprůhledná vrstva
+# totiž světlé pozadí výrazně změní, ale tmavé skoro ne — růžová
+# s alfou .26 dá na bílé jasnou růžovou a na tmavé jen sotva znatelný
+# nádech. Na tmavém je proto potřeba světlejší základ a vyšší krytí.
+#
+# Přepíná se přes prefers-color-scheme, ne z Pythonu: Streamlit motiv
+# do stránky nedává a ve výchozím nastavení ho přebírá od systému
+# (projekt nemá .streamlit/config.toml, který by to přebil). CSS tak
+# reaguje okamžitě a nepotřebuje rerun.
+#
+# Čeká na potvrzení má vlastní jantarovou barvu i v pohledu hosta.
+# Původně vypadalo stejně jako Potvrzeno, protože pro hosta je den
+# tak jako tak zabraný — jenže pro majitele je to obchodní informace:
+# nepotvrzená rezervace znamená zákazníka, kterého je možné urgovat.
+PALETTE_CSS = """
+.stApp {
+    --cal-free: rgba(100, 116, 139, .12);
+    --cal-busy: rgba(244, 63, 94, .20);
+    --cal-busy-text: #9f1239;
+    --cal-pending: rgba(245, 158, 11, .24);
+    --cal-pending-text: #92400e;
+    --cal-accent: #4f46e5;
+    --cal-accent-soft: rgba(79, 70, 229, .20);
+    --cal-hover: rgba(79, 70, 229, .16);
+}
+@media (prefers-color-scheme: dark) {
+    .stApp {
+        --cal-free: rgba(148, 163, 184, .16);
+        --cal-busy: rgba(251, 113, 133, .34);
+        --cal-busy-text: #fecdd3;
+        --cal-pending: rgba(251, 191, 36, .34);
+        --cal-pending-text: #fde68a;
+        --cal-accent: #818cf8;
+        --cal-accent-soft: rgba(129, 140, 248, .34);
+        --cal-hover: rgba(129, 140, 248, .26);
+    }
+}
+"""
+
+GUEST_FREE = "var(--cal-free)"
+GUEST_BUSY = "var(--cal-busy)"
+GUEST_PENDING = "var(--cal-pending)"
+ACCENT = "var(--cal-accent)"
+ACCENT_SOFT = "var(--cal-accent-soft)"
 
 # Stav výběru zakódovaný v klíči tlačítka.
 PICK_NONE = "sel0"      # mimo výběr
 PICK_START = "sel1"     # den příjezdu — zabírá jen odpoledne
 PICK_END = "sel2"       # den odjezdu — zabírá jen dopoledne
 PICK_INSIDE = "sel3"    # den uvnitř pobytu — zabírá celý
+PICK_ONLY = "sel4"      # vybraný příjezd, odjezd se teprve hledá
 
 STATES = [FREE, STATUS_PENDING, STATUS_CONFIRMED, SELECTED]
 
 
-def _day_css(today):
+def _day_css(today, view=VIEW_GUEST):
     """Vygeneruje CSS pro všechny kombinace barev půlených dnů."""
     rules = [
+        PALETTE_CSS,
         """
+        /* Tlačítko vyplní celou buňku. Bez toho by mezi dny zůstaly
+           mezery a vybraný termín by nešel nakreslit jako souvislý
+           pruh — rozpadl by se na řadu oddělených čtverečků.
+           Vizuální odstup dělá padding spolu s background-clip:
+           výplň se ořízne na obsah, takže je uvnitř buňky zapuštěná.
+           Pruh výběru si pak stačí přepnout na border-box a roztáhne
+           se přes celou buňku až k sousedovi. */
         [class*="st-key-day-"] button {
             width: 100%;
-            max-width: 52px;
-            margin: 0 auto;
+            margin: 0;
             aspect-ratio: 1 / 1;
             min-height: 0 !important;
-            padding: 0 !important;
-            border-radius: 8px;
-            border: 1px solid rgba(128, 128, 128, .3) !important;
-            font-size: .88rem !important;
+            padding: 4px !important;
+            background-clip: content-box !important;
+            border: 0 !important;
+            border-radius: 12px;
+            font-size: 1.05rem !important;
             font-weight: 600 !important;
-            color: #111 !important;
-            text-shadow:
-                0 0 3px rgba(255, 255, 255, .95),
-                0 0 3px rgba(255, 255, 255, .95);
-            transition: transform .08s ease, box-shadow .08s ease;
+            position: relative;
+            transition: background .12s ease;
+        }
+        /* Strop šířky patří jen řádku týdne, ne všemu, co dny obsahuje.
+           :has() totiž matchuje i nadřazené bloky — dva měsíce vedle
+           sebe jsou taky stHorizontalBlock a taky v sobě mají dny,
+           takže by strop dostal celý pár a na měsíc by zbyla půlka.
+           :not(:has(stHorizontalBlock)) vybere jen ty nejvnitřnější,
+           tedy skutečné týdny. */
+        [data-testid="stHorizontalBlock"]:has([class*="st-key-day-"]):not(
+            :has([data-testid="stHorizontalBlock"])
+        ),
+        .cal-weekdays {
+            max-width: 34rem;
+            margin-left: auto !important;
+            margin-right: auto !important;
         }
         /* Zvětšení jen tam, kde se opravdu dá najet myší. Na dotyku
            by hover po klepnutí zůstal viset a den by zůstal nafouklý. */
         @media (hover: hover) and (pointer: fine) {
             [class*="st-key-day-"] button:hover:not(:disabled) {
-                transform: scale(1.12);
-                border-color: #1d4ed8 !important;
-                box-shadow: 0 2px 10px rgba(0, 0, 0, .28);
-                z-index: 3;
+                background-color: var(--cal-hover) !important;
             }
         }
         /* Na dotyku dáme zpětnou vazbu stiskem místo hoveru. */
         [class*="st-key-day-"] button:active:not(:disabled) {
-            transform: scale(.94);
+            background-color: var(--cal-accent-soft) !important;
         }
         [class*="st-key-day-"] button:disabled {
             opacity: 1 !important;
             cursor: not-allowed;
         }
         [class*="st-key-day-"] {
-            margin-bottom: -.55rem;
+            margin-bottom: -.35rem;
         }
         /* wrap=False udělá z řádku rolovatelný pás a tah prstem pak
            posouvá řádek místo stránky. Prst přitom na kalendáři začne
@@ -155,9 +228,8 @@ def _day_css(today):
         }
         @media (max-width: 640px) {
             [class*="st-key-day-"] button {
-                max-width: none;
-                border-radius: 6px;
-                font-size: .8rem !important;
+                border-radius: 10px;
+                font-size: .95rem !important;
                 /* Šedý záblesk, kterým Safari kvituje dotyk, přes
                    barevné půlky dne jen ruší. */
                 -webkit-tap-highlight-color: transparent;
@@ -169,6 +241,31 @@ def _day_css(today):
         """
     ]
 
+    if view == VIEW_ADMIN:
+        rules += _admin_rules()
+    else:
+        rules += _guest_rules()
+
+    rules += _shared_state_rules(today)
+
+    return "<style>" + "".join(rules) + "</style>"
+
+
+def _admin_rules():
+    """Barevný přehled obsazenosti — pohled správce.
+
+    Každý den má sytou výplň, takže je stav vidět na první pohled.
+    Číslo je tmavé s bílým podsvitem, což na všech těch barvách
+    funguje v obou motivech.
+    """
+    rules = [
+        '[class*="st-key-day-"] button {'
+        "color: #111 !important;"
+        "text-shadow: 0 0 3px rgba(255,255,255,.95),"
+        " 0 0 3px rgba(255,255,255,.95) !important;"
+        "}"
+    ]
+
     # Devět kombinací dopoledne × odpoledne.
     for morning in STATES:
         for afternoon in STATES:
@@ -177,6 +274,7 @@ def _day_css(today):
                 f"background: linear-gradient(135deg,"
                 f" {COLORS[morning]} 0 50%,"
                 f" {COLORS[afternoon]} 50% 100%) !important;"
+                f"background-clip: content-box !important;"
                 f"}}"
             )
 
@@ -185,38 +283,180 @@ def _day_css(today):
     rules.append(
         f'[class*="-{PAST}-{PAST}-"] button {{'
         f"background: {COLORS[PAST]} !important;"
+        "background-clip: content-box !important;"
         "opacity: .4 !important;"
         "}"
     )
 
-    # Dnešek má čárkovaný rámeček, aby se nepletl s plným
-    # rámečkem vybraného termínu.
+    return rules
+
+
+def _guest_rules():
+    """Střídmý vzhled pro hosta, ve stylu rezervačních webů.
+
+    Volný den není nijak označený — je to prostě číslo v prostoru,
+    bez rámečku a bez výplně. Rámeček kolem každého dne je přesně to,
+    co z kalendáře dělá tabulku.
+
+    Rozlišují se tři stavy, každý svou barvou z palety:
+
+        volno            břidlicová, decentní podklad
+        čeká na potvrzení jantarová, termín „na dotaz“
+        potvrzeno        růžová, k tomu přeškrtnuté číslo
+
+    Přeškrtnutí dostane jen den, který je celý potvrzený. Den, kde
+    figuruje nepotvrzená rezervace, zůstane nepřeškrtnutý schválně —
+    není to hotová věc a přeškrtnutí by tvrdilo víc, než je pravda.
+    """
+    fill = {
+        FREE: GUEST_FREE,
+        STATUS_PENDING: GUEST_PENDING,
+        STATUS_CONFIRMED: GUEST_BUSY,
+    }
+
+    states = (FREE, STATUS_PENDING, STATUS_CONFIRMED)
+
+    rules = [
+        # Volný den: jemný podklad, ať má mřížka strukturu. Úplně
+        # průhledné dny se ukázaly jako nečitelné — zbyla z nich
+        # drobná čísla plovoucí v prázdnu.
+        '[class*="st-key-day-"] button {'
+        f"background: {GUEST_FREE} !important;"
+        "background-clip: content-box !important;"
+        "color: inherit !important;"
+        "text-shadow: none !important;"
+        "}"
+    ]
+
+    # Každá půlka dne dostane barvu svého stavu. U dne, kde jeden host
+    # odjíždí a druhý přijíždí, tak vedle sebe stojí dvě barvy.
+    for morning in states:
+        for afternoon in states:
+            if morning == afternoon == FREE:
+                continue
+
+            rules.append(
+                f'[class*="-{morning}-{afternoon}-"] button {{'
+                f"background: linear-gradient(135deg,"
+                f" {fill[morning]} 0 50%,"
+                f" {fill[afternoon]} 50% 100%) !important;"
+                f"background-clip: content-box !important;"
+                f"}}"
+            )
+
+    # Celý den potvrzený: přeškrtnuté číslo. Tohle je hlavní signál,
+    # plocha je jen doplněk.
     rules.append(
-        f'[class*="st-key-day-{today.isoformat()}-"] button {{'
-        "border: 2px dashed #1e293b !important;"
+        f'[class*="-{STATUS_CONFIRMED}-{STATUS_CONFIRMED}-"] button p {{'
+        "text-decoration: line-through !important;"
+        "color: var(--cal-busy-text) !important;"
+        "opacity: .85 !important;"
         "}"
     )
 
-    # Číslo dne, kterého se dotýká výběr, píšeme bíle — na syté
-    # modré by tmavé číslo zaniklo.
+    # Kdekoli figuruje nepotvrzená rezervace, drží číslo jantarovou
+    # barvu a zůstává nepřeškrtnuté — termín visí ve vzduchu.
+    for other in states:
+        for pair in (
+            (STATUS_PENDING, other),
+            (other, STATUS_PENDING),
+        ):
+            rules.append(
+                f'[class*="-{pair[0]}-{pair[1]}-"] button p {{'
+                "text-decoration: none !important;"
+                "color: var(--cal-pending-text) !important;"
+                "opacity: .95 !important;"
+                "}"
+            )
+
+    # Minulé dny se jen ztlumí.
     rules.append(
-        f'[class*="-{SELECTED}-"] button,'
-        f'[class*="-{SELECTED}-"] button:disabled {{'
-        "color: #fff !important;"
-        "text-shadow: 0 1px 3px rgba(0, 0, 0, .55) !important;"
+        f'[class*="-{PAST}-{PAST}-"] button {{'
+        "opacity: .25 !important;"
         "}"
     )
 
-    # Krajní dny pobytu dostanou výraznější obrys, ať je poznat,
-    # kde pobyt začíná a končí.
-    for edge in (PICK_START, PICK_END):
+    return rules
+
+
+def _shared_state_rules(today):
+    """Pravidla, která platí v obou pohledech.
+
+    Vybraný termín se kreslí jako souvislý pruh přes celé buňky:
+    background-clip se přepne na border-box, takže výplň přeteče
+    zapuštění a napojí se na souseda. Krajní dny jsou plné a zakulacené
+    zvenčí, dny mezi nimi světlejší — stejně jako to dělají rezervační
+    weby. Pruh se láme na koncích týdne, což je u kalendáře očekávané.
+    """
+    accent = ACCENT
+    accent_soft = ACCENT_SOFT
+
+    band = (
+        "background-clip: border-box !important;"
+        "padding: 3px 0 !important;"
+    )
+
+    rules = [
+        # Dny uvnitř pobytu: světlá výplň bez zaoblení, ať pruh drží.
+        f'[class*="-{PICK_INSIDE}"] button {{'
+        f"background: {accent_soft} !important;"
+        f"{band}"
+        "border-radius: 0 !important;"
+        "}",
+        # Den příjezdu: plný, zakulacený zleva, pruh pokračuje doprava.
+        f'[class*="-{PICK_START}"] button {{'
+        f"background: {accent} !important;"
+        f"{band}"
+        "border-radius: 10px 0 0 10px !important;"
+        "}",
+        # Den odjezdu: plný, zakulacený zprava, pruh končí.
+        f'[class*="-{PICK_END}"] button {{'
+        f"background: {accent} !important;"
+        f"{band}"
+        "border-radius: 0 10px 10px 0 !important;"
+        "}",
+        # Samotný příjezd bez odjezdu: žádný pruh, jen chip.
+        f'[class*="-{PICK_ONLY}"] button {{'
+        f"background: {accent} !important;"
+        "background-clip: content-box !important;"
+        "border-radius: 10px !important;"
+        "}",
+    ]
+
+    # Číslo na sytém podkladu musí být bílé v obou motivech.
+    for pick in (PICK_START, PICK_END, PICK_ONLY):
         rules.append(
-            f'[class*="-{edge}"] button {{'
-            "border: 2px solid #1e40af !important;"
+            f'[class*="-{pick}"] button,'
+            f'[class*="-{pick}"] button p {{'
+            "color: #fff !important;"
+            "text-decoration: none !important;"
+            "opacity: 1 !important;"
             "}"
         )
 
-    return "<style>" + "".join(rules) + "</style>"
+    # Dnešek pozná tečka pod číslem. Rámeček by do mřížky bez rámečků
+    # nepatřil a pletl by se s vybraným termínem.
+    rules.append(
+        f'[class*="st-key-day-{today.isoformat()}-"] button p {{'
+        "font-weight: 800 !important;"
+        "}"
+    )
+    rules.append(
+        f'[class*="st-key-day-{today.isoformat()}-"] button::after {{'
+        'content: "";'
+        "position: absolute;"
+        "left: 50%;"
+        "bottom: 5px;"
+        "width: 4px;"
+        "height: 4px;"
+        "margin-left: -2px;"
+        "border-radius: 50%;"
+        "background: currentColor;"
+        "opacity: .75;"
+        "}"
+    )
+
+    return rules
 
 
 LEGEND_CSS = """
@@ -241,7 +481,7 @@ LEGEND_CSS = """
 .cal-weekdays {
     display: grid; grid-template-columns: repeat(7, 1fr);
     gap: 0; text-align: center;
-    font-size: .7rem; font-weight: 600; opacity: .6;
+    font-size: .8rem; font-weight: 600; opacity: .7;
     margin-bottom: .25rem;
 }
 </style>
@@ -275,7 +515,10 @@ def _pick_state(day, sel_from, sel_to):
         return PICK_NONE
 
     if day == sel_from:
-        return PICK_START
+        # Dokud není vybraný odjezd, není z čeho kreslit pruh — den
+        # zůstane samostatný. Jinak by z něj vybíhal pruh doprava
+        # do dnů, které do pobytu vůbec nepatří.
+        return PICK_START if sel_to is not None else PICK_ONLY
 
     if day == sel_to:
         return PICK_END
@@ -286,29 +529,37 @@ def _pick_state(day, sel_from, sel_to):
     return PICK_NONE
 
 
-def _tooltip(day, morning, afternoon, disabled):
-    labels = {
-        STATUS_PENDING: "čeká na potvrzení",
-        STATUS_CONFIRMED: "potvrzeno",
-    }
+# Jak se o obsazené půlce dne mluví, když se nesmí jmenovat host.
+HALF_LABELS = {
+    STATUS_PENDING: "na dotaz",
+    STATUS_CONFIRMED: "obsazeno",
+}
 
+
+def half_text(res, view):
+    """Popíše stav půlky dne. Jméno hosta jen v pohledu správce.
+
+    Kdo si termín zabral, je osobní údaj. V zákaznickém kalendáři
+    proto zůstane jen informace, že je den zabraný — to je všechno,
+    co host pro rozhodnutí potřebuje.
+    """
+    if res is None:
+        return "volno"
+
+    if view == VIEW_ADMIN:
+        return (
+            f"{res['first_name']} {res['last_name']}"
+            f" ({HALF_LABELS[res['status']]})"
+        )
+
+    return HALF_LABELS[res["status"]]
+
+
+def _tooltip(day, morning, afternoon, disabled, view=VIEW_GUEST):
     parts = [day.strftime("%d.%m.%Y")]
 
-    if morning is not None:
-        parts.append(
-            f"do 11:00 obsazeno — {morning['first_name']} "
-            f"{morning['last_name']} ({labels[morning['status']]})"
-        )
-    else:
-        parts.append("do 11:00 volno")
-
-    if afternoon is not None:
-        parts.append(
-            f"od 15:00 obsazeno — {afternoon['first_name']} "
-            f"{afternoon['last_name']} ({labels[afternoon['status']]})"
-        )
-    else:
-        parts.append("od 15:00 volno")
+    parts.append(f"do 11:00 {half_text(morning, view)}")
+    parts.append(f"od 15:00 {half_text(afternoon, view)}")
 
     if disabled:
         parts.append("nelze vybrat")
@@ -323,7 +574,8 @@ def month_range(start, count):
 
 
 def render_month(
-    year, month, reservations, sel_from, sel_to, today, show_title=True
+    year, month, reservations, sel_from, sel_to, today, show_title=True,
+    view=VIEW_GUEST,
 ):
     """Vykreslí jeden měsíc. Vrátí datum, na které uživatel klikl, jinak None.
 
@@ -353,7 +605,9 @@ def render_month(
     while day_number <= days_in_month:
         # wrap=False: bez toho Streamlit pod ~640 px přeskládá
         # každý sloupec pod sebe a ze sedmi dnů týdne udělá sloupec.
-        cols = st.columns(7, gap="small", wrap=False)
+        # gap=0: dny se musí dotýkat, jinak se pruh vybraného
+        # termínu rozpadne na oddělené čtverečky.
+        cols = st.columns(7, gap=0, wrap=False)
 
         for weekday in range(7):
             is_lead_gap = day_number == 1 and weekday < first_weekday
@@ -417,7 +671,8 @@ def render_month(
                     str(day_number),
                     key=key,
                     help=_tooltip(
-                        day, morning, afternoon, disabled or fully_booked
+                        day, morning, afternoon,
+                        disabled or fully_booked, view,
                     ),
                     disabled=disabled,
                     width="stretch",
@@ -431,9 +686,12 @@ def render_month(
     return clicked
 
 
-def render_calendar(months, reservations, sel_from, sel_to, today, columns=2):
+def render_calendar(
+    months, reservations, sel_from, sel_to, today, columns=2,
+    view=VIEW_GUEST,
+):
     """Vykreslí mřížku měsíců. Vrátí datum, na které uživatel klikl."""
-    st.html(_day_css(today))
+    st.html(_day_css(today, view))
 
     clicked = None
 
@@ -446,6 +704,7 @@ def render_calendar(months, reservations, sel_from, sel_to, today, columns=2):
                 result = render_month(
                     year, month, reservations, sel_from, sel_to, today,
                     show_title=columns > 1,
+                    view=view,
                 )
 
                 if result is not None:
@@ -454,12 +713,26 @@ def render_calendar(months, reservations, sel_from, sel_to, today, columns=2):
     return clicked
 
 
-def render_legend():
-    items = [
-        (COLORS[FREE], "Volno"),
-        (COLORS[STATUS_PENDING], "Čeká na potvrzení"),
-        (COLORS[STATUS_CONFIRMED], "Potvrzeno"),
-    ]
+def render_legend(view=VIEW_GUEST):
+    """Vysvětlivky k barvám. Každý pohled potřebuje jiné.
+
+    Hostovi nemá smysl vysvětlovat, že prázdný den je volný — to je
+    samo sebou. Zajímá ho opak: co znamená ta šedá.
+    """
+    # „Na dotaz“ je nepotvrzená rezervace. Hostovi to říká, že termín
+    # ještě není definitivní, a majiteli, že je koho urgovat.
+    if view == VIEW_GUEST:
+        items = [
+            (GUEST_PENDING, "Na dotaz"),
+            (GUEST_BUSY, "Obsazeno"),
+            (ACCENT, "Váš termín"),
+        ]
+    else:
+        items = [
+            (COLORS[FREE], "Volno"),
+            (COLORS[STATUS_PENDING], "Čeká na potvrzení"),
+            (COLORS[STATUS_CONFIRMED], "Potvrzeno"),
+        ]
 
     html = "".join(
         f'<div class="cal-legend-item">'

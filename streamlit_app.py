@@ -16,6 +16,28 @@ st.set_page_config(
     layout="wide",
 )
 
+# Streamlit nechává nad obsahem široký pruh. Na stránce, kde hlavní
+# roli hraje kalendář, je to jen nevyužité místo — obsah se tím
+# posune výš a mřížka se vejde na obrazovku bez rolování.
+#
+# Dolů to ale jde jen po určitou mez: horní navigace je připnutá přes
+# obsah, ne nad ním, takže jí tohle odsazení musí nechat místo. Pod
+# zhruba 3 rem začne lišta překrývat nadpis.
+st.html(
+    """
+    <style>
+    [data-testid="stMainBlockContainer"] {
+        padding-top: 4.5rem !important;
+    }
+    [data-testid="stMainBlockContainer"] h1 {
+        margin-top: 0 !important;
+        padding-top: 0 !important;
+        margin-bottom: .4rem !important;
+    }
+    </style>
+    """
+)
+
 try:
     storage.init_db()
 except Exception as error:

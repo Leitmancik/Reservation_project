@@ -12,7 +12,10 @@ import pricing
 import storage
 from calendar_view import (
     MONTH_NAMES,
+    VIEW_ADMIN,
+    VIEW_GUEST,
     half_states,
+    half_text,
     month_range,
     render_calendar,
     render_legend,
@@ -80,7 +83,7 @@ def _clear_selection():
     st.session_state.sel_to = None
 
 
-def _handle_click(day, reservations):
+def _handle_click(day, reservations, view=VIEW_GUEST):
     """Zpracuje kliknutí na den v kalendáři."""
     sel_from = st.session_state.sel_from
     sel_to = st.session_state.sel_to
@@ -106,10 +109,20 @@ def _handle_click(day, reservations):
     conflict = storage.find_conflict(sel_from, day, reservations)
 
     if conflict is not None:
+        # Jméno hosta patří jen do pohledu správce — v zákaznickém
+        # kalendáři by to byl únik osobního údaje. Termín sám o sobě
+        # osobní údaj není a host ho potřebuje vidět, aby věděl,
+        # kudy si pobyt zkrátit.
+        kdo = ""
+
+        if view == VIEW_ADMIN:
+            kdo = (
+                f" {conflict['first_name']} {conflict['last_name']}"
+            )
+
         set_flash(
             "error",
-            f"V tomhle rozsahu je už rezervace "
-            f"{conflict['first_name']} {conflict['last_name']} "
+            f"V tomhle rozsahu je už rezervace{kdo} "
             f"({conflict['date_from'].strftime('%d.%m.%Y')} – "
             f"{conflict['date_to'].strftime('%d.%m.%Y')}). "
             "Vyber kratší pobyt nebo jiný termín.",
@@ -119,6 +132,29 @@ def _handle_click(day, reservations):
         return
 
     st.session_state.sel_to = day
+
+
+def _view_switch():
+    """Přepínač mezi pohledem hosta a přehledem správce.
+
+    Není to oprávnění, jen volba zobrazení — přepnout si může kdokoli.
+    Aplikace nikoho nepřihlašuje, takže skrytí jmen za tenhle přepínač
+    by byla iluze bezpečí, ne bezpečí.
+    """
+    labels = {
+        VIEW_GUEST: "Rezervovat",
+        VIEW_ADMIN: "Přehled obsazenosti",
+    }
+
+    return st.segmented_control(
+        "Zobrazení",
+        options=[VIEW_GUEST, VIEW_ADMIN],
+        format_func=lambda value: labels[value],
+        default=VIEW_GUEST,
+        required=True,
+        key="cal_view",
+        label_visibility="collapsed",
+    )
 
 
 def _month_label(months):
@@ -189,7 +225,7 @@ def _month_navigation(months):
             st.rerun()
 
 
-def _day_detail(reservations):
+def _day_detail(reservations, view=VIEW_GUEST):
     """Vypíše, kdo zabírá den, na který uživatel klepl.
 
     Na desktopu totéž říká nápověda pod myší, jenže ta se na dotykovém
@@ -209,19 +245,8 @@ def _day_detail(reservations):
     if morning is None and afternoon is None:
         return
 
-    labels = {
-        storage.STATUS_PENDING: "čeká na potvrzení",
-        storage.STATUS_CONFIRMED: "potvrzeno",
-    }
-
     def half_line(res, when):
-        if res is None:
-            return f"**{when}** — volno"
-
-        return (
-            f"**{when}** — {res['first_name']} {res['last_name']} "
-            f"({labels[res['status']]})"
-        )
+        return f"**{when}** — {half_text(res, view)}"
 
     with st.container(border=True):
         st.markdown(f"**{day.strftime('%d.%m.%Y')}**")
@@ -438,9 +463,7 @@ def _reservation_form(reservations, prices):
 
             if conflict is not None:
                 st.error(
-                    f"Termín mezitím obsadila rezervace "
-                    f"{conflict['first_name']} {conflict['last_name']}. "
-                    "Vyber prosím jiný."
+                    "Termín mezitím někdo obsadil. Vyber prosím jiný."
                 )
                 return
 
@@ -483,6 +506,8 @@ def render():
 
     show_flash()
 
+    view = _view_switch()
+
     try:
         reservations = storage.load_reservations()
     except storage.StorageError as error:
@@ -522,13 +547,14 @@ def render():
         st.session_state.sel_to,
         today,
         columns=visible,
+        view=view,
     )
 
     if clicked is not None:
-        _handle_click(clicked, reservations)
+        _handle_click(clicked, reservations, view)
         st.rerun()
 
-    _day_detail(reservations)
+    _day_detail(reservations, view)
 
     # Rychlé délky pobytu dávají smysl jen ve chvíli, kdy je vybraný
     # příjezd a chybí odjezd.
@@ -538,7 +564,7 @@ def render():
     ):
         _quick_lengths(reservations, prices)
 
-    st.html(render_legend())
+    st.html(render_legend(view))
 
     st.divider()
 

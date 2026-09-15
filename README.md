@@ -9,8 +9,9 @@ Aplikace má dvě stránky v horním menu:
 - **Kalendář** — dva měsíce vedle sebe, mezi kterými se listuje
   šipkami. Termín se vybírá kliknutím: první klik určí den příjezdu,
   druhý den odjezdu. Když je vybraný jen příjezd, nabídnou se rychlé
-  délky pobytu (2, 3, 7 a 14 nocí). Pak se objeví formulář na jméno,
-  příjmení a e-mail.
+  délky pobytu (2, 3, 7 a 14 nocí) rovnou s cenou. Pak se objeví
+  formulář na jméno, příjmení a e-mail — i s cenou pobytu a rozpisem
+  po nocích, pokud se cena během pobytu mění.
 - **Rezervace** — seznam záznamů, potvrzování a mazání, export do CSV/Excelu
 - **Cenotvorba** — základní cena a období, která ji přebíjejí
 

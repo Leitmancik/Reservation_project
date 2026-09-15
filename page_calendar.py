@@ -8,6 +8,7 @@ from datetime import date, timedelta
 
 import streamlit as st
 
+import pricing
 import storage
 from calendar_view import (
     MONTH_NAMES,
@@ -15,7 +16,7 @@ from calendar_view import (
     render_calendar,
     render_legend,
 )
-from ui import nights_label, set_flash, show_flash
+from ui import format_price, nights_label, set_flash, show_flash
 
 # Kolik měsíců je vidět naráz a jak daleko dopředu jde listovat.
 MONTHS_VISIBLE = 2
@@ -113,7 +114,7 @@ def _month_navigation(months):
             st.rerun()
 
 
-def _quick_lengths(reservations):
+def _quick_lengths(reservations, prices):
     """Tlačítka pro rychlý výběr délky pobytu od zvoleného příjezdu."""
     sel_from = st.session_state.sel_from
 
@@ -125,9 +126,18 @@ def _quick_lengths(reservations):
         date_to = sel_from + timedelta(days=nights)
         blocked = storage.find_conflict(sel_from, date_to, reservations)
 
+        total, _ = pricing.stay_total(sel_from, date_to, prices)
+
+        # Cena patří na tlačítko — ať je vidět rozdíl mezi délkami
+        # bez klikání.
+        label = nights_label(nights)
+
+        if total is not None and blocked is None:
+            label = f"{label} · {format_price(total)}"
+
         with col:
             if st.button(
-                nights_label(nights),
+                label,
                 key=f"quick_{nights}",
                 width="stretch",
                 disabled=blocked is not None,
@@ -141,7 +151,7 @@ def _quick_lengths(reservations):
                 st.rerun()
 
 
-def _selection_bar():
+def _selection_bar(prices):
     """Pruh nad kalendářem s aktuálně vybraným termínem."""
     sel_from = st.session_state.sel_from
     sel_to = st.session_state.sel_to
@@ -163,12 +173,18 @@ def _selection_bar():
             )
         else:
             nights = (sel_to - sel_from).days
-            st.success(
+            total, _ = pricing.stay_total(sel_from, sel_to, prices)
+
+            text = (
                 f"**{sel_from.strftime('%d.%m.%Y')}** od 15:00 → "
                 f"**{sel_to.strftime('%d.%m.%Y')}** do 11:00 "
-                f"· {nights_label(nights)}",
-                icon="✅",
+                f"· {nights_label(nights)}"
             )
+
+            if total is not None:
+                text += f" · **{format_price(total)}**"
+
+            st.success(text, icon="✅")
 
     with col_clear:
         if sel_from is not None:
@@ -177,7 +193,63 @@ def _selection_bar():
                 st.rerun()
 
 
-def _reservation_form(reservations):
+def _price_summary(sel_from, sel_to, prices):
+    """Cena pobytu i s rozpisem, ať je vidět, jak se k ní došlo."""
+    total, breakdown = pricing.stay_total(sel_from, sel_to, prices)
+
+    if not prices:
+        st.caption(
+            "Ceník zatím není nastavený — doplň ho na stránce Cenotvorba."
+        )
+        return
+
+    if total is None:
+        st.warning(
+            "Některé noci nemají cenu. Nastav základní cenu na stránce "
+            "Cenotvorba.",
+            icon="⚠️",
+        )
+        return
+
+    nights = len(breakdown)
+
+    col_total, col_detail = st.columns([1, 2])
+
+    with col_total:
+        st.metric(f"Cena za {nights_label(nights)}", format_price(total))
+
+    with col_detail:
+        # Rozpis dává smysl jen tehdy, když nejsou všechny noci stejné.
+        unique = {item["price"] for item in breakdown}
+
+        if len(unique) == 1:
+            label = pricing.period_for_night(breakdown[0]["day"], prices)
+            st.caption(
+                f"{format_price(breakdown[0]['price'])} za noc"
+                + (f" — {label['label']}" if label and label.get("label") else "")
+            )
+        else:
+            st.caption("Cena se v průběhu pobytu mění:")
+
+            lines = []
+
+            for item in breakdown:
+                rule = pricing.period_for_night(item["day"], prices)
+                lines.append(
+                    f"{item['day'].strftime('%d.%m.')} — "
+                    f"{format_price(item['price'])}"
+                    + (f" ({rule['label']})" if rule and rule.get("label") else "")
+                )
+
+            st.markdown(
+                "<div style='font-size:.85rem;opacity:.85'>"
+                + "<br>".join(lines)
+                + "</div>",
+                unsafe_allow_html=True,
+            )
+
+
+def _reservation_form(reservations, prices):
     sel_from = st.session_state.sel_from
     sel_to = st.session_state.sel_to
 
@@ -196,6 +268,8 @@ def _reservation_form(reservations):
         f"Termín: {sel_from.strftime('%d.%m.%Y')} od 15:00 → "
         f"{sel_to.strftime('%d.%m.%Y')} do 11:00 ({nights_label(nights)})"
     )
+
+    _price_summary(sel_from, sel_to, prices)
 
     with st.form("new_reservation", clear_on_submit=True):
         col1, col2, col3 = st.columns(3)
@@ -286,9 +360,17 @@ def render():
         )
         return
 
+    # Ceník se drží v paměti stránky stejně jako rezervace, takže
+    # klikání v kalendáři kvůli němu nečeká na tabulku.
+    try:
+        prices = storage.load_prices()
+    except storage.StorageError:
+        # Bez ceníku se dá rezervovat dál, jen se neukáže cena.
+        prices = []
+
     today = date.today()
 
-    _selection_bar()
+    _selection_bar(prices)
 
     start = date(today.year, today.month, 1)
     months = month_range(
@@ -316,13 +398,13 @@ def render():
         st.session_state.sel_from is not None
         and st.session_state.sel_to is None
     ):
-        _quick_lengths(reservations)
+        _quick_lengths(reservations, prices)
 
     st.html(render_legend())
 
     st.divider()
 
-    _reservation_form(reservations)
+    _reservation_form(reservations, prices)
 
 
 def _shift_start(start, offset):

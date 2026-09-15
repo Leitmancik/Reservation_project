@@ -22,6 +22,8 @@ from datetime import date, datetime
 import requests
 import streamlit as st
 
+from storage_errors import StorageError
+
 STATUS_PENDING = "pending"
 STATUS_CONFIRMED = "confirmed"
 
@@ -45,10 +47,6 @@ RETRY_DELAY_SECONDS = 0.4
 # do tabulky jen jednou. Hlavní zrychlení ale dělá paměť stránky
 # ve storage.py.
 CACHE_TTL_SECONDS = 60
-
-
-class StorageError(RuntimeError):
-    """Skript v tabulce odpověděl chybou."""
 
 
 def is_configured():

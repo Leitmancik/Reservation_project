@@ -21,6 +21,8 @@ import gspread
 import streamlit as st
 from google.oauth2.service_account import Credentials
 
+from storage_errors import StorageError
+
 STATUS_PENDING = "pending"
 STATUS_CONFIRMED = "confirmed"
 
@@ -78,17 +80,48 @@ def _sheet_id():
 @st.cache_resource(show_spinner=False)
 def _worksheet():
     """Připojí se k tabulce. Spojení se drží, nenavazuje se pořád dokola."""
-    credentials = Credentials.from_service_account_info(
-        dict(st.secrets["gcp_service_account"]),
-        scopes=SCOPES,
-    )
+    try:
+        credentials = Credentials.from_service_account_info(
+            dict(st.secrets["gcp_service_account"]),
+            scopes=SCOPES,
+        )
 
-    client = gspread.authorize(credentials)
-    worksheet = client.open_by_key(_sheet_id()).sheet1
+        client = gspread.authorize(credentials)
+        worksheet = client.open_by_key(_sheet_id()).sheet1
+    except gspread.exceptions.APIError as error:
+        raise _readable(error)
+    except Exception as error:
+        raise StorageError(f"Nepodařilo se připojit k tabulce: {error}")
 
     _ensure_header(worksheet)
 
     return worksheet
+
+
+def _readable(error):
+    """Přeloží chybu z Google API na větu, která poradí, co s tím."""
+    text = str(error)
+
+    if "PERMISSION_DENIED" in text or "permission" in text.lower():
+        return StorageError(
+            "Tabulka není nasdílená servisnímu účtu. Otevři ji, dej "
+            "Sdílet a přidej e-mail účtu jako Editor."
+        )
+
+    if "SERVICE_DISABLED" in text or "has not been used" in text:
+        return StorageError(
+            "V projektu Google Cloud není zapnuté Google Sheets API."
+        )
+
+    if "RESOURCE_EXHAUSTED" in text or "Quota" in text:
+        return StorageError(
+            "Google dočasně odmítá další požadavky. Zkus to za chvíli."
+        )
+
+    if "NOT_FOUND" in text or "not found" in text.lower():
+        return StorageError("Tabulka nebyla nalezena — zkontroluj sheet_id.")
+
+    return StorageError(f"Tabulka odpověděla chybou: {text[:200]}")
 
 
 def _ensure_header(worksheet):
@@ -132,7 +165,10 @@ def _parse_date(value):
 
 @st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
 def _load_rows():
-    return _worksheet().get_all_records(expected_headers=HEADER)
+    try:
+        return _worksheet().get_all_records(expected_headers=HEADER)
+    except gspread.exceptions.APIError as error:
+        raise _readable(error)
 
 
 def load_reservations():
@@ -172,6 +208,15 @@ def _invalidate():
 
 def add_reservation(first_name, last_name, email, date_from, date_to):
     """Přidá rezervaci jako nový řádek ve stavu 'čeká na potvrzení'."""
+    try:
+        _append(first_name, last_name, email, date_from, date_to)
+    except gspread.exceptions.APIError as error:
+        raise _readable(error)
+
+    _invalidate()
+
+
+def _append(first_name, last_name, email, date_from, date_to):
     _worksheet().append_row(
         [
             first_name.strip(),
@@ -185,8 +230,6 @@ def add_reservation(first_name, last_name, email, date_from, date_to):
         ],
         value_input_option="USER_ENTERED",
     )
-
-    _invalidate()
 
 
 def _find_row(reservation_id):
@@ -204,16 +247,27 @@ def _find_row(reservation_id):
 
 
 def set_status(reservation_id, status):
-    row = _find_row(reservation_id)
+    try:
+        row = _find_row(reservation_id)
 
-    if row is not None:
+        if row is None:
+            raise StorageError("Rezervace v tabulce není.")
+
         _worksheet().update_cell(row, COL_STATUS, STATUS_TO_SHEET[status])
-        _invalidate()
+    except gspread.exceptions.APIError as error:
+        raise _readable(error)
+
+    _invalidate()
 
 
 def delete_reservation(reservation_id):
-    row = _find_row(reservation_id)
+    try:
+        row = _find_row(reservation_id)
 
-    if row is not None:
-        _worksheet().delete_rows(row)
-        _invalidate()
+        # Když řádek už není, je hotovo — hlásit chybu by bylo matoucí.
+        if row is not None:
+            _worksheet().delete_rows(row)
+    except gspread.exceptions.APIError as error:
+        raise _readable(error)
+
+    _invalidate()

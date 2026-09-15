@@ -12,15 +12,43 @@ import pricing
 import storage
 from calendar_view import (
     MONTH_NAMES,
+    half_states,
     month_range,
     render_calendar,
     render_legend,
 )
 from ui import format_price, nights_label, set_flash, show_flash
 
-# Kolik měsíců je vidět naráz a jak daleko dopředu jde listovat.
-MONTHS_VISIBLE = 2
+# Jak daleko dopředu jde listovat.
 MAX_MONTH_OFFSET = 23
+
+# Streamlit renderuje na serveru a o šířce displeje neví nic —
+# st.context nabízí hlavičky, ne rozměry okna. Na počet měsíců vedle
+# sebe tak zbývá odhad z User-Agenta.
+#
+# Je to odhad, ne jistota: iPad se v Safari hlásí jako Macintosh a
+# dostane dva měsíce, zúžení okna na desktopu se projeví až po
+# načtení stránky znovu. Pro telefony, kde na tom záleží nejvíc,
+# to ale vychází spolehlivě.
+MOBILE_UA_MARKERS = ("iphone", "ipod", "android", "mobile", "windows phone")
+
+
+def _is_mobile():
+    """Odhadne z hlavičky prohlížeče, jestli jde o telefon."""
+    try:
+        agent = st.context.headers.get("User-Agent", "")
+    except Exception:
+        # Mimo běžící server hlavičky nejsou — chovej se jako desktop.
+        return False
+
+    agent = agent.lower()
+
+    return any(marker in agent for marker in MOBILE_UA_MARKERS)
+
+
+def _months_visible():
+    """Na telefon jeden měsíc, jinak dva vedle sebe."""
+    return 1 if _is_mobile() else 2
 
 # Nabízené délky pobytu. Většina hostů jezdí zhruba na týden,
 # tak ať to jde vybrat jedním kliknutím.
@@ -36,6 +64,18 @@ def _handle_click(day, reservations):
     """Zpracuje kliknutí na den v kalendáři."""
     sel_from = st.session_state.sel_from
     sel_to = st.session_state.sel_to
+
+    morning, afternoon = half_states(day, reservations)
+
+    # Den, na který se kleplo, si pamatujeme kvůli detailu pod
+    # kalendářem. Na dotyku se k obsazenosti jinak nedá dostat —
+    # nápověda tlačítka se ukáže jen pod myší.
+    st.session_state.detail_day = day
+
+    # Plně obsazený den se rezervovat nedá, takže výběr necháme být
+    # a zůstane jen u detailu.
+    if morning is not None and afternoon is not None:
+        return
 
     # Kompletní výběr nebo klik před začátek = začínáme znovu.
     if sel_from is None or sel_to is not None or day <= sel_from:
@@ -65,6 +105,11 @@ def _month_label(months):
     """Popisek typu „Září – Říjen 2026“ nad kalendářem."""
     (y1, m1), (y2, m2) = months[0], months[-1]
 
+    # Na telefonu je vidět jediný měsíc — „Říjen – Říjen 2026“ by
+    # vypadalo jako chyba.
+    if (y1, m1) == (y2, m2):
+        return f"{MONTH_NAMES[m1 - 1]} {y1}"
+
     if y1 == y2:
         return f"{MONTH_NAMES[m1 - 1]} – {MONTH_NAMES[m2 - 1]} {y1}"
 
@@ -75,11 +120,19 @@ def _month_navigation(months):
     """Šipky pro listování měsíci. Dozadu se nedá před aktuální měsíc."""
     offset = st.session_state.month_offset
 
-    col_prev, col_label, col_next, col_refresh = st.columns([1, 6, 1, 1])
+    # Na telefonu je popisek kratší („Říjen 2026“ místo
+    # „Září – Říjen 2026“), tak se šipkám uvolní místo — v poměru
+    # 1:6:1:1 by na 375px displeji měly sotva 40 px na dotyk.
+    spec = [1, 3, 1, 1] if _is_mobile() else [1, 6, 1, 1]
+
+    col_prev, col_label, col_next, col_refresh = st.columns(
+        spec, wrap=False
+    )
 
     with col_prev:
         if st.button(
             "◀",
+            key="nav_prev",
             width="stretch",
             disabled=offset == 0,
             help="Předchozí měsíc",
@@ -97,6 +150,7 @@ def _month_navigation(months):
     with col_next:
         if st.button(
             "▶",
+            key="nav_next",
             width="stretch",
             disabled=offset >= MAX_MONTH_OFFSET,
             help="Další měsíc",
@@ -107,11 +161,57 @@ def _month_navigation(months):
     with col_refresh:
         if st.button(
             "↻",
+            key="nav_refresh",
             width="stretch",
             help="Načíst rezervace z tabulky znovu",
         ):
             storage.refresh()
             st.rerun()
+
+
+def _day_detail(reservations):
+    """Vypíše, kdo zabírá den, na který uživatel klepl.
+
+    Na desktopu totéž říká nápověda pod myší, jenže ta se na dotykovém
+    displeji nezobrazí. Bez tohohle panelu by na telefonu zůstala jen
+    barva čtverečku a nedalo by se zjistit, kdo je kde ubytovaný.
+    """
+    day = st.session_state.get("detail_day")
+
+    if day is None:
+        return
+
+    morning, afternoon = half_states(day, reservations)
+
+    # U volného dne by panel nic nepřidal — vybraný termín ukazuje
+    # pruh nad kalendářem. Tím se detail sám uklidí, jakmile si
+    # uživatel vybere volný den.
+    if morning is None and afternoon is None:
+        return
+
+    labels = {
+        storage.STATUS_PENDING: "čeká na potvrzení",
+        storage.STATUS_CONFIRMED: "potvrzeno",
+    }
+
+    def half_line(res, when):
+        if res is None:
+            return f"**{when}** — volno"
+
+        return (
+            f"**{when}** — {res['first_name']} {res['last_name']} "
+            f"({labels[res['status']]})"
+        )
+
+    with st.container(border=True):
+        st.markdown(f"**{day.strftime('%d.%m.%Y')}**")
+        st.markdown(half_line(morning, "do 11:00"))
+        st.markdown(half_line(afternoon, "od 15:00"))
+
+        if morning is not None and afternoon is not None:
+            st.caption(
+                "Celý den je obsazený, jako termín ho vybrat nejde."
+            )
 
 
 def _quick_lengths(reservations, prices):
@@ -383,10 +483,12 @@ def render():
 
     _selection_bar(prices)
 
+    visible = _months_visible()
+
     start = date(today.year, today.month, 1)
     months = month_range(
         _shift_start(start, st.session_state.month_offset),
-        MONTHS_VISIBLE,
+        visible,
     )
 
     _month_navigation(months)
@@ -397,11 +499,14 @@ def render():
         st.session_state.sel_from,
         st.session_state.sel_to,
         today,
+        columns=visible,
     )
 
     if clicked is not None:
         _handle_click(clicked, reservations)
         st.rerun()
+
+    _day_detail(reservations)
 
     # Rychlé délky pobytu dávají smysl jen ve chvíli, kdy je vybraný
     # příjezd a chybí odjezd.

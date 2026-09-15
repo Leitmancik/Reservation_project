@@ -14,6 +14,23 @@ STATUS_LABELS = {
     storage.STATUS_CONFIRMED: "Potvrzeno",
 }
 
+# Na úzkém displeji Streamlit srovná sloupce pod sebe, takže by čtyři
+# metriky zabraly čtyři obrazovky. Přepsáním minimální šířky na polovinu
+# se z nich stane mřížka 2 × 2. Na širokém displeji se nic nemění.
+METRICS_CSS = """
+<style>
+@media (max-width: 640px) {
+    [data-testid="stHorizontalBlock"]:has([data-testid="stMetric"])
+        > [data-testid="stColumn"] {
+        min-width: calc(50% - .5rem) !important;
+        flex: 1 1 calc(50% - .5rem) !important;
+    }
+    [data-testid="stMetricValue"] { font-size: 1.4rem; }
+    [data-testid="stMetricLabel"] { font-size: .78rem; }
+}
+</style>
+"""
+
 
 def _to_dataframe(reservations):
     return pd.DataFrame(
@@ -166,6 +183,8 @@ def render():
     earned = sum(
         r["price"] for r in confirmed if r.get("price") is not None
     )
+
+    st.html(METRICS_CSS)
 
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Celkem", len(reservations))

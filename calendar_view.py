@@ -72,11 +72,19 @@ def _day_css(today):
                 0 0 3px rgba(255, 255, 255, .95);
             transition: transform .08s ease, box-shadow .08s ease;
         }
-        [class*="st-key-day-"] button:hover:not(:disabled) {
-            transform: scale(1.12);
-            border-color: #1d4ed8 !important;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, .28);
-            z-index: 3;
+        /* Zvětšení jen tam, kde se opravdu dá najet myší. Na dotyku
+           by hover po klepnutí zůstal viset a den by zůstal nafouklý. */
+        @media (hover: hover) and (pointer: fine) {
+            [class*="st-key-day-"] button:hover:not(:disabled) {
+                transform: scale(1.12);
+                border-color: #1d4ed8 !important;
+                box-shadow: 0 2px 10px rgba(0, 0, 0, .28);
+                z-index: 3;
+            }
+        }
+        /* Na dotyku dáme zpětnou vazbu stiskem místo hoveru. */
+        [class*="st-key-day-"] button:active:not(:disabled) {
+            transform: scale(.94);
         }
         [class*="st-key-day-"] button:disabled {
             opacity: 1 !important;
@@ -85,8 +93,54 @@ def _day_css(today):
         [class*="st-key-day-"] {
             margin-bottom: -.55rem;
         }
-        [class*="st-key-empty-"] {
-            aspect-ratio: 1 / 1;
+        /* Prázdné pole drží místo a rozměr, ale nesmí být vidět.
+           visibility (ne display) proto, aby si ponechalo velikost. */
+        [class*="st-key-day-empty-"] button {
+            visibility: hidden !important;
+        }
+        /* Šipky ◀ ▶ ↻ dostanou v poměru 1:6:1:1 na telefonu sotva
+           40 px. Výchozí vodorovné odsazení tlačítka je pak širší než
+           sloupec a znak se odřízne — proto ho tady rušíme. */
+        .st-key-nav_prev button,
+        .st-key-nav_next button,
+        .st-key-nav_refresh button {
+            padding-left: 0 !important;
+            padding-right: 0 !important;
+            min-width: 0 !important;
+            overflow: visible !important;
+        }
+        .st-key-nav_prev button p,
+        .st-key-nav_next button p,
+        .st-key-nav_refresh button p {
+            overflow: visible !important;
+            text-overflow: clip !important;
+        }
+        /* wrap=False u st.columns zastaví skládání sloupců pod sebe,
+           ale zároveň jim dá min-width: 8rem (128 px). Sedm dnů by pak
+           chtělo 896 px a přeteklo by i na desktopu. Tady to minimum
+           rušíme, ať se týden roztáhne přesně na dostupnou šířku. */
+        [data-testid="stHorizontalBlock"]:has([class*="st-key-day-"])
+            > [data-testid="stColumn"],
+        [data-testid="stHorizontalBlock"]:has(.st-key-nav_prev)
+            > [data-testid="stColumn"] {
+            min-width: 0 !important;
+        }
+        [data-testid="stHorizontalBlock"]:has([class*="st-key-day-"])
+            > [data-testid="stColumn"] {
+            flex: 1 1 0 !important;
+        }
+        @media (max-width: 640px) {
+            [class*="st-key-day-"] button {
+                max-width: none;
+                border-radius: 6px;
+                font-size: .8rem !important;
+                /* Šedý záblesk, kterým Safari kvituje dotyk, přes
+                   barevné půlky dne jen ruší. */
+                -webkit-tap-highlight-color: transparent;
+            }
+            [class*="st-key-day-"] {
+                margin-bottom: -.75rem;
+            }
         }
         """
     ]
@@ -244,9 +298,20 @@ def month_range(start, count):
     return [((base + i) // 12, (base + i) % 12 + 1) for i in range(count)]
 
 
-def render_month(year, month, reservations, sel_from, sel_to, today):
-    """Vykreslí jeden měsíc. Vrátí datum, na které uživatel klikl, jinak None."""
-    st.html(f'<div class="cal-month-title">{MONTH_NAMES[month - 1]} {year}</div>')
+def render_month(
+    year, month, reservations, sel_from, sel_to, today, show_title=True
+):
+    """Vykreslí jeden měsíc. Vrátí datum, na které uživatel klikl, jinak None.
+
+    `show_title` vypne nadpis nad mřížkou. Když je vidět jediný měsíc,
+    říká totéž popisek mezi šipkami a na telefonu je každý ušetřený
+    řádek znát.
+    """
+    if show_title:
+        st.html(
+            f'<div class="cal-month-title">'
+            f"{MONTH_NAMES[month - 1]} {year}</div>"
+        )
     st.html(
         '<div class="cal-weekdays">'
         + "".join(f"<div>{name}</div>" for name in WEEKDAY_NAMES)
@@ -257,29 +322,46 @@ def render_month(year, month, reservations, sel_from, sel_to, today):
 
     clicked = None
     day_number = 1
+    week_index = 0
 
     # Kalendář kreslíme po týdnech, aby dny seděly pod správnými
     # názvy dnů i v měsíci, který nezačíná v pondělí.
     while day_number <= days_in_month:
-        cols = st.columns(7, gap="small")
+        # wrap=False: bez toho Streamlit pod ~640 px přeskládá
+        # každý sloupec pod sebe a ze sedmi dnů týdne udělá sloupec.
+        cols = st.columns(7, gap="small", wrap=False)
 
         for weekday in range(7):
             is_lead_gap = day_number == 1 and weekday < first_weekday
 
             if is_lead_gap or day_number > days_in_month:
                 with cols[weekday]:
-                    st.html(
-                        f'<div class="cal-empty" '
-                        f'style="aspect-ratio:1/1"></div>'
+                    # Prázdné pole musí mít úplně stejnou stavbu jako
+                    # den, jinak se řádek, ve kterém je, chová jinak
+                    # vysoko než ostatní: záporný spodní okraj, kterým
+                    # se řádky přitahují k sobě, sedí na obalu widgetu,
+                    # a holý <div> ho nedostal. Proto je to taky
+                    # tlačítko, jen schované přes CSS.
+                    st.button(
+                        "\u00a0",
+                        key=(
+                            f"day-empty-{year}-{month:02d}"
+                            f"-{week_index}-{weekday}"
+                        ),
+                        disabled=True,
+                        width="stretch",
                     )
                 continue
 
             day = date(year, month, day_number)
             morning, afternoon = half_states(day, reservations)
 
-            # Plně obsazený den nejde použít jako příjezd ani jako odjezd.
+            # Plně obsazený den nejde použít jako příjezd ani jako odjezd,
+            # ale klepnout na něj musí jít — na dotyku se jinak není jak
+            # dozvědět, kdo ho zabírá. Stránka na takový klik jen ukáže
+            # detail a výběr nechá být. Zamčené jsou tak už jen minulé dny.
             fully_booked = morning is not None and afternoon is not None
-            disabled = fully_booked or day < today
+            disabled = day < today
 
             # Minulý den bez rezervace vykreslíme šedě. Minulý den
             # s rezervací si barvy nechá, ať je vidět historie pobytů.
@@ -310,13 +392,17 @@ def render_month(year, month, reservations, sel_from, sel_to, today):
                 if st.button(
                     str(day_number),
                     key=key,
-                    help=_tooltip(day, morning, afternoon, disabled),
+                    help=_tooltip(
+                        day, morning, afternoon, disabled or fully_booked
+                    ),
                     disabled=disabled,
                     width="stretch",
                 ):
                     clicked = day
 
             day_number += 1
+
+        week_index += 1
 
     return clicked
 
@@ -334,7 +420,8 @@ def render_calendar(months, reservations, sel_from, sel_to, today, columns=2):
         for index, (year, month) in enumerate(row):
             with cols[index]:
                 result = render_month(
-                    year, month, reservations, sel_from, sel_to, today
+                    year, month, reservations, sel_from, sel_to, today,
+                    show_title=columns > 1,
                 )
 
                 if result is not None:

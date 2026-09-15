@@ -6,9 +6,11 @@ Streamlit aplikace pro správu rezervací ubytování.
 
 Aplikace má dvě stránky v horním menu:
 
-- **Kalendář** — dva měsíce vedle sebe, mezi kterými se listuje
-  šipkami. Termín se vybírá kliknutím: první klik určí den příjezdu,
-  druhý den odjezdu. Když je vybraný jen příjezd, nabídnou se rychlé
+- **Kalendář** — na počítači dva měsíce vedle sebe, na telefonu jeden,
+  mezi kterými se listuje šipkami. Termín se vybírá kliknutím: první
+  klik určí den příjezdu, druhý den odjezdu. Klepnutí na obsazený den
+  vypíše pod kalendářem, kdo ho zabírá — nápověda pod myší se totiž
+  na dotykovém displeji nezobrazí. Když je vybraný jen příjezd, nabídnou se rychlé
   délky pobytu (2, 3, 7 a 14 nocí) rovnou s cenou. Pak se objeví
   formulář na jméno, příjmení a e-mail — i s cenou pobytu a rozpisem
   po nocích, pokud se cena během pobytu mění.

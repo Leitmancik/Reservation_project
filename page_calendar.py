@@ -54,6 +54,26 @@ def _months_visible():
 # tak ať to jde vybrat jedním kliknutím.
 QUICK_NIGHTS = [2, 3, 7, 14]
 
+# Čtyři délky pobytu by se na úzkém displeji složily pod sebe a
+# zabraly by přes 200 px hned pod kalendářem, kde je místa nejmíň.
+# Přepsáním minimální šířky na polovinu z nich bude mřížka 2 × 2.
+QUICK_CSS = """
+<style>
+@media (max-width: 640px) {
+    [data-testid="stHorizontalBlock"]:has([class*="st-key-quick_"])
+        > [data-testid="stColumn"] {
+        min-width: calc(50% - .5rem) !important;
+        flex: 1 1 calc(50% - .5rem) !important;
+    }
+    [class*="st-key-quick_"] button {
+        font-size: .82rem !important;
+        padding-left: .25rem !important;
+        padding-right: .25rem !important;
+    }
+}
+</style>
+"""
+
 
 def _clear_selection():
     st.session_state.sel_from = None
@@ -219,6 +239,8 @@ def _quick_lengths(reservations, prices):
     sel_from = st.session_state.sel_from
 
     st.caption("Nebo rovnou vyber délku pobytu:")
+
+    st.html(QUICK_CSS)
 
     cols = st.columns(len(QUICK_NIGHTS))
 

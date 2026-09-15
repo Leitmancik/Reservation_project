@@ -93,6 +93,30 @@ def _day_css(today):
         [class*="st-key-day-"] {
             margin-bottom: -.55rem;
         }
+        /* wrap=False udělá z řádku rolovatelný pás a tah prstem pak
+           posouvá řádek místo stránky. Prst přitom na kalendáři začne
+           skoro vždycky, protože zabírá většinu displeje.
+
+           Obě osy musí být visible najednou. Zakázat jen vodorovnou
+           nestačí: podle CSS se druhá osa z visible sama přepne na
+           auto, takže z řádku vznikne svislý rolovací kontejner —
+           a protože dny mají záporný spodní okraj, je v něm co
+           rolovat. Řádek se pak posouval nahoru a dolů sám v sobě.
+
+           touch-action: pan-y navíc pustí gesto na stránku i kdyby
+           přetečení někdy přece jen vzniklo. */
+        [data-testid="stHorizontalBlock"]:has([class*="st-key-day-"]),
+        [data-testid="stHorizontalBlock"]:has(.st-key-nav_prev),
+        [data-testid="stHorizontalBlock"]:has([class*="st-key-quick_"]) {
+            overflow: visible !important;
+            touch-action: pan-y !important;
+        }
+        /* Totéž na samotných dnech: bez toho by tah, který začne
+           přesně na tlačítku, mohl skončit jako nechtěné klepnutí
+           místo odrolování. */
+        [class*="st-key-day-"] button {
+            touch-action: pan-y !important;
+        }
         /* Prázdné pole drží místo a rozměr, ale nesmí být vidět.
            visibility (ne display) proto, aby si ponechalo velikost. */
         [class*="st-key-day-empty-"] button {

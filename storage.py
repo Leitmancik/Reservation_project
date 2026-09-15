@@ -91,8 +91,9 @@ def load_reservations(force=False):
 
 
 def refresh():
-    """Zahodí uložené rezervace, takže se příště načtou z tabulky."""
+    """Zahodí uložená data, takže se příště načtou z tabulky."""
     st.session_state.pop(_CACHE_KEY, None)
+    st.session_state.pop("_prices_cache", None)
 
 
 def add_reservation(first_name, last_name, email, date_from, date_to):
@@ -108,6 +109,52 @@ def set_status(reservation_id, status):
 def delete_reservation(reservation_id):
     backend().delete_reservation(reservation_id)
     refresh()
+
+
+# ─────────────────────────── ceník ───────────────────────────
+
+_PRICES_KEY = "_prices_cache"
+
+
+def supports_pricing():
+    """Umí současné úložiště ceník?
+
+    Apps Script v tabulce obsluhuje jen rezervace — ceník by znamenal
+    rozšířit a znovu nasadit skript. Přes servisní účet i v místním
+    souboru ceník funguje.
+    """
+    return hasattr(backend(), "load_prices")
+
+
+def load_prices(force=False):
+    """Ceník, pokud možno z paměti stránky."""
+    if not supports_pricing():
+        return []
+
+    if not force:
+        cached = st.session_state.get(_PRICES_KEY)
+
+        if cached is not None:
+            return cached
+
+    prices = backend().load_prices()
+    st.session_state[_PRICES_KEY] = prices
+
+    return prices
+
+
+def refresh_prices():
+    st.session_state.pop(_PRICES_KEY, None)
+
+
+def save_price(price_id, date_from, date_to, price, label):
+    backend().save_price(price_id, date_from, date_to, price, label)
+    refresh_prices()
+
+
+def delete_price(price_id):
+    backend().delete_price(price_id)
+    refresh_prices()
 
 
 def find_conflict(date_from, date_to, reservations=None):

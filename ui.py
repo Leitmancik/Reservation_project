@@ -29,3 +29,16 @@ def nights_label(nights):
         return f"{nights} noci"
 
     return f"{nights} nocí"
+
+
+def format_price(value):
+    """Cena po česku: 15 000 Kč, případně s haléři."""
+    if value is None:
+        return "—"
+
+    if float(value).is_integer():
+        text = f"{int(value):,}".replace(",", "\u00a0")
+    else:
+        text = f"{value:,.2f}".replace(",", "\u00a0").replace(".", ",")
+
+    return f"{text}\u00a0Kč"

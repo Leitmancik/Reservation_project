@@ -6,6 +6,7 @@ Spuštění lokálně:  streamlit run streamlit_app.py
 import streamlit as st
 
 import page_calendar
+import page_pricing
 import page_reservations
 import storage
 
@@ -36,6 +37,12 @@ pages = [
         title="Rezervace",
         icon="📋",
         url_path="rezervace",
+    ),
+    st.Page(
+        page_pricing.render,
+        title="Cenotvorba",
+        icon="💰",
+        url_path="cenotvorba",
     ),
 ]
 

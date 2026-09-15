@@ -104,3 +104,77 @@ def delete_reservation(reservation_id):
             "DELETE FROM reservations WHERE id = ?",
             (reservation_id,),
         )
+
+
+# ─────────────────────────── ceník ───────────────────────────
+
+
+def _init_prices():
+    with _connect() as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS prices (
+                id        TEXT PRIMARY KEY,
+                date_from TEXT,
+                date_to   TEXT,
+                price     REAL NOT NULL,
+                label     TEXT
+            )
+            """
+        )
+
+
+def load_prices():
+    """Načte ceník. Řádek bez data je základní cena."""
+    _init_prices()
+
+    with _connect() as conn:
+        rows = conn.execute("SELECT * FROM prices").fetchall()
+
+    return [
+        {
+            "id": row["id"],
+            "date_from": (
+                date.fromisoformat(row["date_from"]) if row["date_from"] else None
+            ),
+            "date_to": (
+                date.fromisoformat(row["date_to"]) if row["date_to"] else None
+            ),
+            "price": row["price"],
+            "label": row["label"] or "",
+        }
+        for row in rows
+    ]
+
+
+def save_price(price_id, date_from, date_to, price, label):
+    import uuid
+
+    _init_prices()
+
+    with _connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO prices (id, date_from, date_to, price, label)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                date_from = excluded.date_from,
+                date_to   = excluded.date_to,
+                price     = excluded.price,
+                label     = excluded.label
+            """,
+            (
+                price_id or uuid.uuid4().hex[:12],
+                date_from.isoformat() if date_from else None,
+                date_to.isoformat() if date_to else None,
+                price,
+                label.strip(),
+            ),
+        )
+
+
+def delete_price(price_id):
+    _init_prices()
+
+    with _connect() as conn:
+        conn.execute("DELETE FROM prices WHERE id = ?", (price_id,))

@@ -14,6 +14,7 @@ do Streamlit secrets pod klíč [gcp_service_account] a tabulka musí být
 tomu účtu nasdílená s právem editovat.
 """
 
+import re
 import uuid
 from datetime import date, datetime
 
@@ -33,6 +34,9 @@ STATUS_TO_SHEET = {
 }
 SHEET_TO_STATUS = {v: k for k, v in STATUS_TO_SHEET.items()}
 
+RESERVATIONS_SHEET = "Rezervace"
+PRICING_SHEET = "Cenotvorba"
+
 HEADER = [
     "Jméno",
     "Příjmení",
@@ -46,6 +50,9 @@ HEADER = [
 
 COL_ID = HEADER.index("ID") + 1
 COL_STATUS = HEADER.index("Stav") + 1
+
+PRICING_HEADER = ["Od", "Do", "Cena za noc", "Popis", "ID"]
+PRICING_COL_ID = PRICING_HEADER.index("ID") + 1
 
 DEFAULT_SHEET_ID = "1izUy4AgW32PJFLSL3Cs9xHfLmmPf229FUSz6Z6w0oNM"
 
@@ -78,22 +85,66 @@ def _sheet_id():
 
 
 @st.cache_resource(show_spinner=False)
-def _worksheet():
-    """Připojí se k tabulce. Spojení se drží, nenavazuje se pořád dokola."""
+def _spreadsheet():
+    """Otevře dokument. Spojení se drží, nenavazuje se pořád dokola."""
     try:
         credentials = Credentials.from_service_account_info(
             dict(st.secrets["gcp_service_account"]),
             scopes=SCOPES,
         )
 
-        client = gspread.authorize(credentials)
-        worksheet = client.open_by_key(_sheet_id()).sheet1
+        return gspread.authorize(credentials).open_by_key(_sheet_id())
     except gspread.exceptions.APIError as error:
         raise _readable(error)
     except Exception as error:
         raise StorageError(f"Nepodařilo se připojit k tabulce: {error}")
 
+
+@st.cache_resource(show_spinner=False)
+def _worksheet():
+    """List s rezervacemi."""
+    document = _spreadsheet()
+
+    try:
+        worksheet = document.worksheet(RESERVATIONS_SHEET)
+    except gspread.exceptions.WorksheetNotFound:
+        # Starší tabulky mají list pojmenovaný jinak — vezmeme první.
+        worksheet = document.sheet1
+    except gspread.exceptions.APIError as error:
+        raise _readable(error)
+
     _ensure_header(worksheet)
+
+    return worksheet
+
+
+@st.cache_resource(show_spinner=False)
+def _pricing_worksheet():
+    """List s ceníkem. Když ještě není, založí se."""
+    document = _spreadsheet()
+
+    try:
+        worksheet = document.worksheet(PRICING_SHEET)
+    except gspread.exceptions.WorksheetNotFound:
+        try:
+            worksheet = document.add_worksheet(
+                title=PRICING_SHEET, rows=200, cols=len(PRICING_HEADER)
+            )
+        except gspread.exceptions.APIError as error:
+            raise _readable(error)
+    except gspread.exceptions.APIError as error:
+        raise _readable(error)
+
+    if not worksheet.row_values(1):
+        worksheet.update(
+            range_name=f"A1:{chr(ord('A') + len(PRICING_HEADER) - 1)}1",
+            values=[PRICING_HEADER],
+        )
+        worksheet.format(
+            f"A1:{chr(ord('A') + len(PRICING_HEADER) - 1)}1",
+            {"textFormat": {"bold": True}},
+        )
+        worksheet.freeze(rows=1)
 
     return worksheet
 
@@ -271,3 +322,125 @@ def delete_reservation(reservation_id):
         raise _readable(error)
 
     _invalidate()
+
+
+# ─────────────────────────── ceník ───────────────────────────
+
+
+def _parse_price(value):
+    """Přečte cenu z buňky. Zvládne i '15 000', '15 000 Kč' nebo '15.000'."""
+    if isinstance(value, (int, float)):
+        return float(value)
+
+    text = str(value)
+    cleaned = "".join(c for c in text if c.isdigit() or c in ",.")
+
+    # Česky se tisíce oddělují tečkou nebo mezerou a desetinná část
+    # čárkou. '15.000' proto znamená patnáct tisíc, ne patnáct korun.
+    if re.fullmatch(r"\d{1,3}(\.\d{3})+", cleaned):
+        cleaned = cleaned.replace(".", "")
+
+    cleaned = cleaned.replace(",", ".")
+
+    if cleaned.count(".") > 1:
+        cleaned = cleaned.replace(".", "", cleaned.count(".") - 1)
+
+    try:
+        return float(cleaned)
+    except ValueError:
+        return None
+
+
+@st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
+def _load_price_rows():
+    try:
+        return _pricing_worksheet().get_all_records(
+            expected_headers=PRICING_HEADER
+        )
+    except gspread.exceptions.APIError as error:
+        raise _readable(error)
+
+
+def load_prices():
+    """Načte ceník. Řádek bez data je základní cena."""
+    prices = []
+
+    for row in _load_price_rows():
+        price = _parse_price(row.get("Cena za noc"))
+
+        # Řádek bez ceny je k ničemu, přeskočíme ho.
+        if price is None:
+            continue
+
+        prices.append(
+            {
+                "id": str(row.get("ID", "")).strip(),
+                "date_from": _parse_date(row.get("Od")),
+                "date_to": _parse_date(row.get("Do")),
+                "price": price,
+                "label": str(row.get("Popis", "")).strip(),
+            }
+        )
+
+    return prices
+
+
+def _invalidate_prices():
+    _load_price_rows.clear()
+
+
+def _find_price_row(price_id):
+    ids = _pricing_worksheet().col_values(PRICING_COL_ID)
+
+    for index, value in enumerate(ids, start=1):
+        if index == 1:
+            continue
+
+        if str(value).strip() == str(price_id):
+            return index
+
+    return None
+
+
+def save_price(price_id, date_from, date_to, price, label):
+    """Přidá nový řádek ceníku, nebo upraví stávající."""
+    values = [
+        date_from.isoformat() if date_from else "",
+        date_to.isoformat() if date_to else "",
+        price,
+        label.strip(),
+    ]
+
+    try:
+        if price_id:
+            row = _find_price_row(price_id)
+
+            if row is not None:
+                _pricing_worksheet().update(
+                    range_name=f"A{row}:D{row}",
+                    values=[values],
+                    value_input_option="USER_ENTERED",
+                )
+                _invalidate_prices()
+                return
+
+        _pricing_worksheet().append_row(
+            values + [uuid.uuid4().hex[:12]],
+            value_input_option="USER_ENTERED",
+        )
+    except gspread.exceptions.APIError as error:
+        raise _readable(error)
+
+    _invalidate_prices()
+
+
+def delete_price(price_id):
+    try:
+        row = _find_price_row(price_id)
+
+        if row is not None:
+            _pricing_worksheet().delete_rows(row)
+    except gspread.exceptions.APIError as error:
+        raise _readable(error)
+
+    _invalidate_prices()

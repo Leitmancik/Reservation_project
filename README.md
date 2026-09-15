@@ -12,6 +12,7 @@ Aplikace má dvě stránky v horním menu:
   délky pobytu (2, 3, 7 a 14 nocí). Pak se objeví formulář na jméno,
   příjmení a e-mail.
 - **Rezervace** — seznam záznamů, potvrzování a mazání, export do CSV/Excelu
+- **Cenotvorba** — základní cena a období, která ji přebíjejí
 
 ### Půlené dny
 
@@ -59,6 +60,8 @@ hosta a zároveň příjezd dalšího.
 | `storage_appsscript.py` | ukládání do Sheets přes skript v tabulce |
 | `storage_sheets.py` | ukládání do Sheets přes servisní účet |
 | `storage_sqlite.py` | ukládání do souboru (lokální vývoj) |
+| `pricing.py` | výpočet ceny pobytu z ceníku |
+| `page_pricing.py` | stránka Cenotvorba |
 | `ui.py` | drobné UI pomůcky |
 | `nastav_sheets.py` | jednorázové nastavení servisního účtu |
 | `apps_script/Kod.gs` | skript, který běží uvnitř tabulky |
@@ -90,6 +93,29 @@ Rezervace se ukládají do Google Sheets. Tabulka má tyhle sloupce:
 Prvních pět sloupců je pro člověka, poslední tři potřebuje aplikace:
 podle `ID` najde řádek při potvrzování a mazání, `Stav` drží potvrzení.
 Do tabulky jde psát i ručně — jen ty tři sloupce nemazat.
+
+### Ceník
+
+Ceník leží v listu **Cenotvorba** ve stejné tabulce:
+
+| Sloupec | Obsah |
+|---|---|
+| Od | první den období (prázdné = základní cena) |
+| Do | poslední den období |
+| Cena za noc | částka v Kč |
+| Popis | k čemu období je, např. `Letní sezóna` |
+| ID | interní identifikátor řádku |
+
+Řádek bez vyplněných dat je **základní cena** — platí všude, kde
+neplatí žádné období. Díky tomu není potřeba vyplňovat celý rok.
+
+Když se dvě období překrývají, **platí to kratší**. Silvestr uvnitř
+zimní sezóny tak funguje sám od sebe a sezónu kvůli němu není nutné
+dělit na kusy.
+
+Cena se počítá **za noc podle dne příjezdu**: pobyt od 4. do 7. září
+jsou tři noci (4/5, 5/6, 6/7), takže se sečtou ceny za 4., 5. a 6.
+září. Období 1. 7. – 31. 8. proto pokrývá i noc z 31. 8. na 1. 9.
 
 ### Nastavení přístupu
 

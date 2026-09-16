@@ -143,11 +143,19 @@ def _month_navigation(months):
     # Na telefonu je popisek kratší („Říjen 2026“ místo
     # „Září – Říjen 2026“), tak se šipkám uvolní místo — v poměru
     # 1:6:1:1 by na 375px displeji měly sotva 40 px na dotyk.
-    spec = [1, 3, 1, 1] if _is_mobile() else [1, 6, 1, 1]
+    is_mobile = _is_mobile()
 
-    col_prev, col_label, col_next, col_refresh = st.columns(
-        spec, wrap=False
-    )
+    if is_mobile:
+        # Na telefonu zachováme čtyři jasně oddělené dotykové plochy.
+        col_prev, col_label, col_next, col_refresh = st.columns(
+            [1, 3, 1, 1], wrap=False
+        )
+        col_today = None
+    else:
+        # Na počítači je navíc rychlá cesta zpět na aktuální měsíc.
+        col_prev, col_label, col_today, col_next, col_refresh = st.columns(
+            [1, 4.5, 1.5, 1, 1], wrap=False
+        )
 
     with col_prev:
         if st.button(
@@ -166,6 +174,18 @@ def _month_navigation(months):
             f"font-weight:600;padding-top:.35rem'>{_month_label(months)}</div>",
             unsafe_allow_html=True,
         )
+
+    if col_today is not None:
+        with col_today:
+            if st.button(
+                "Dnes",
+                key="nav_today",
+                width="stretch",
+                disabled=offset == 0,
+                help="Přejít na aktuální měsíc",
+            ):
+                st.session_state.month_offset = 0
+                st.rerun()
 
     with col_next:
         if st.button(
@@ -283,14 +303,14 @@ def _selection_bar(prices):
     with col_text:
         if sel_from is None:
             st.info(
-                "Klikni v kalendáři na den **příjezdu**. "
-                "Druhým kliknutím vybereš den **odjezdu**.",
+                "**1. Vyber příjezd** · potom klikni na den odjezdu. "
+                "Příjezd od 15:00, odjezd do 11:00.",
                 icon="👉",
             )
         elif sel_to is None:
             st.warning(
-                f"Příjezd **{sel_from.strftime('%d.%m.%Y')}** od 15:00. "
-                "Teď klikni na den odjezdu.",
+                f"**Příjezd: {sel_from.strftime('%d.%m.%Y')} od 15:00** "
+                "· **2. Vyber odjezd**",
                 icon="📅",
             )
         else:

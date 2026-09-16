@@ -68,4 +68,13 @@ pages = [
     ),
 ]
 
+# Stránky si uložíme, aby se mezi nimi dalo přepnout i z kódu.
+# st.switch_page potřebuje objekt stránky a moduly stránek se na sebe
+# navzájem neodkazují — jinak by vznikl kruhový import.
+st.session_state["_pages"] = {
+    "kalendar": pages[0],
+    "rezervace": pages[1],
+    "cenotvorba": pages[2],
+}
+
 st.navigation(pages, position="top").run()

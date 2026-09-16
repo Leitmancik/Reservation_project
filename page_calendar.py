@@ -7,6 +7,7 @@ druhý den odjezdu. Další klik začne výběr znovu.
 from datetime import date, timedelta
 
 import streamlit as st
+from streamlit.components.v1 import html as _html_component
 
 import pricing
 import storage
@@ -14,6 +15,7 @@ from calendar_view import (
     MONTH_NAMES,
     VIEW_ADMIN,
     VIEW_GUEST,
+    half_reservations,
     half_states,
     half_text,
     month_range,
@@ -102,6 +104,10 @@ def _handle_click(day, reservations, view=VIEW_GUEST):
     # kalendářem. Na dotyku se k obsazenosti jinak nedá dostat —
     # nápověda tlačítka se ukáže jen pod myší.
     st.session_state.detail_day = day
+
+    # Detail je pod kalendářem, takže na velkém displeji leží mimo
+    # obrazovku. Příznak si vyzvedne _day_detail a sjede k němu.
+    st.session_state["_scroll_to_detail"] = True
 
     # V přehledu se nerezervuje, takže klik jen otevře detail.
     if view == VIEW_ADMIN:
@@ -228,41 +234,219 @@ STATUS_LABELS = {
 }
 
 
-def _admin_detail(day, morning, afternoon):
+# Jméno v konfliktu je tlačítko, ale má vypadat jako nadpis. Výchozí
+# tlačítko je drobné a nese kolem sebe odsazení, kvůli kterému mezi
+# jménem a údaji pod ním zůstávala díra.
+LINK_CSS = """
+<style>
+[class*="st-key-jdi_"] button {
+    font-size: 1.1rem !important;
+    font-weight: 700 !important;
+    padding: 0 !important;
+    min-height: 0 !important;
+    height: auto !important;
+}
+[class*="st-key-jdi_"] button p {
+    font-size: 1.1rem !important;
+    font-weight: 700 !important;
+}
+[class*="st-key-jdi_"] {
+    margin-bottom: -.85rem !important;
+}
+</style>
+"""
+
+
+def _open_in_reservations(res):
+    """Přepne na stránku Rezervace a otevře tam danou rezervaci."""
+    st.session_state["focus_reservation"] = str(res["id"])
+
+    stranky = st.session_state.get("_pages")
+
+    if stranky:
+        st.switch_page(stranky["rezervace"])
+
+
+def _reservation_card(res, odkaz_key=None):
+    """Vypíše jednu rezervaci se vším, co majitel potřebuje.
+
+    Používá to detail dne i rozbalený konflikt, ať se údaje o téže
+    rezervaci nezobrazují na dvou místech jinak.
+
+    S `odkaz_key` je jméno tlačítko, které přepne na stránku Rezervace
+    a tuhle rezervaci tam otevře. Řešení konfliktu obvykle končí tím,
+    že se jedna z nich potvrdí nebo smaže, a to jde jen tam.
+    """
+    noci = (res["date_to"] - res["date_from"]).days
+
+    jmeno = f"{res['first_name']} {res['last_name']}"
+
+    # Stav patří do stejného bloku jako zbytek údajů. Jako samostatný
+    # prvek by kolem sebe dostal rozestup, který Streamlit dává mezi
+    # prvky, a mezi jménem a daty by zela mezera.
+    radky = [
+        STATUS_LABELS[res["status"]],
+        f"{res['date_from'].strftime('%d.%m.%Y')} od 15:00 → "
+        f"{res['date_to'].strftime('%d.%m.%Y')} do 11:00 "
+        f"({nights_label(noci)})",
+        f"{res['email']}",
+    ]
+
+    if res.get("price") is not None:
+        radky.append(f"Cena pobytu: **{format_price(res['price'])}**")
+
+    if odkaz_key is None:
+        radky.insert(0, f"**{jmeno}**")
+    else:
+        if st.button(
+            f"{jmeno}  ›",
+            key=odkaz_key,
+            type="tertiary",
+            help="Otevřít na stránce Rezervace",
+        ):
+            _open_in_reservations(res)
+
+    st.markdown("  \n".join(radky))
+
+
+def _admin_detail(day, reservations):
     """Vypíše celé rezervace, které se daného dne týkají.
 
     Majitel od přehledu chce vědět, kdo tam je a jak ho zastihnout,
-    ne jen že je obsazeno. Když jeden host odjíždí a druhý přijíždí,
-    jsou to dvě různé rezervace a vypíšou se obě; jinak by se tatáž
-    rezervace opakovala dvakrát, proto se odstraňují duplicity.
+    ne jen že je obsazeno. Vypíšou se všechny — i ty, které se
+    navzájem překrývají, protože právě ty je potřeba rozhodnout.
+    Tatáž rezervace přes obě půlky dne se vypíše jen jednou.
     """
+    morning, afternoon = half_reservations(day, reservations)
+
     videno = []
 
-    for res in (morning, afternoon):
-        if res is not None and not any(
-            str(res["id"]) == str(v["id"]) for v in videno
-        ):
+    for res in morning + afternoon:
+        if not any(str(res["id"]) == str(v["id"]) for v in videno):
             videno.append(res)
 
+    st.html(LINK_CSS)
+
     for res in videno:
-        noci = (res["date_to"] - res["date_from"]).days
-
-        radky = [
-            f"**{res['first_name']} {res['last_name']}** — "
-            f"{STATUS_LABELS[res['status']]}",
-            f"{res['date_from'].strftime('%d.%m.%Y')} od 15:00 → "
-            f"{res['date_to'].strftime('%d.%m.%Y')} do 11:00 "
-            f"({nights_label(noci)})",
-            f"{res['email']}",
-        ]
-
-        if res.get("price") is not None:
-            radky.append(f"Cena pobytu: **{format_price(res['price'])}**")
-
-        st.markdown("  \n".join(radky))
+        # Klíč musí začínat na "jdi_", aby platil styl odkazu, a být
+        # jiný než v upozornění na konflikty — tatáž rezervace může
+        # být na stránce dvakrát.
+        _reservation_card(res, odkaz_key=f"jdi_detail_{res['id']}")
 
         if res is not videno[-1]:
             st.divider()
+
+
+def _jump_to(day):
+    """Přelistuje kalendář na měsíc daného dne a otevře jeho detail.
+
+    Rolování je tu podstatné: když konflikt padne do měsíce, který je
+    zrovna vidět, `month_offset` se nezmění a bez posunu na detail by
+    to vypadalo, že tlačítko nedělá vůbec nic.
+    """
+    today = date.today()
+
+    offset = (day.year * 12 + day.month - 1) - (
+        today.year * 12 + today.month - 1
+    )
+
+    st.session_state.month_offset = max(0, min(MAX_MONTH_OFFSET, offset))
+    st.session_state.detail_day = day
+    st.session_state["_scroll_to_detail"] = True
+
+
+def _clash_banner(reservations):
+    """Upozorní majitele na termíny, o které se hlásí víc lidí.
+
+    Od chvíle, kdy nepotvrzená rezervace termín neblokuje, může jich
+    na stejný termín přijít víc. Je to záměr — jenže pak to někdo musí
+    rozhodnout, a bez upozornění by se na to přišlo až ve chvíli, kdy
+    potvrzení druhé rezervace skončí chybou.
+
+    Každý konflikt jde rozbalit a jsou pod ním rovnou kontakty na oba
+    zájemce. Řešení konfliktu totiž znamená někomu zavolat nebo napsat
+    a bez toho by se majitel musel proklikávat jinam.
+    """
+    pary = []
+
+    for index, prvni in enumerate(reservations):
+        for druha in reservations[index + 1:]:
+            if (
+                prvni["date_from"] < druha["date_to"]
+                and druha["date_from"] < prvni["date_to"]
+            ):
+                pary.append((prvni, druha))
+
+    if not pary:
+        return
+
+    pocet = len(pary)
+    slovo = "termín" if pocet == 1 else ("termíny" if pocet < 5 else "termínů")
+
+    st.html(LINK_CSS)
+
+    with st.container(border=True):
+        st.markdown(
+            f"⚠️ **{pocet} {slovo} se překrývá** — potvrdit lze jen jednu "
+            "rezervaci z každé dvojice."
+        )
+
+        for prvni, druha in pary:
+            # Den, kterým se překryv začíná. Na ten se kalendář
+            # přelistuje, protože právě tam je konflikt vidět.
+            od = max(prvni["date_from"], druha["date_from"])
+            do = min(prvni["date_to"], druha["date_to"])
+
+            popis = (
+                f"{prvni['first_name']} {prvni['last_name']}"
+                f" × {druha['first_name']} {druha['last_name']}"
+                f"  ·  {od.strftime('%d.%m.')} – {do.strftime('%d.%m.%Y')}"
+            )
+
+            with st.expander(popis):
+                _reservation_card(prvni, odkaz_key=f"jdi_{prvni['id']}_{druha['id']}_a")
+                st.divider()
+                _reservation_card(druha, odkaz_key=f"jdi_{prvni['id']}_{druha['id']}_b")
+
+                if st.button(
+                    "Ukázat v kalendáři",
+                    # Klíč nesmí obsahovat "clash" ani "swap" — CSS
+                    # hledá tahle slova ve třídách dnů v kalendáři
+                    # a Streamlit z klíče dělá třídu st-key-<klíč>.
+                    key=f"konflikt_{prvni['id']}_{druha['id']}",
+                ):
+                    _jump_to(od)
+                    st.rerun()
+
+
+def _scroll_to_detail():
+    """Sjede na detail dne, pokud se o to někdo řekl kliknutím.
+
+    Streamlit na rolování žádné API nemá, takže to obstará krátký
+    skript ve vložené komponentě. Ta běží ve vlastním rámu, ale ten má
+    povolené allow-scripts i allow-same-origin, takže se k rodičovské
+    stránce dostane.
+
+    Příznak se spotřebuje, aby se nerolovalo při každém překreslení —
+    jinak by stránka ujížděla pokaždé, když se cokoli změní.
+    """
+    if not st.session_state.pop("_scroll_to_detail", False):
+        return
+
+    _html_component(
+        """
+        <script>
+            const cil = window.parent.document.querySelector(
+                ".st-key-detail_dne"
+            );
+
+            if (cil) {
+                cil.scrollIntoView({behavior: "smooth", block: "center"});
+            }
+        </script>
+        """,
+        height=0,
+    )
 
 
 def _day_detail(reservations, view=VIEW_GUEST):
@@ -286,11 +470,14 @@ def _day_detail(reservations, view=VIEW_GUEST):
     if morning is None and afternoon is None:
         return
 
-    with st.container(border=True):
+    # key dá kontejneru třídu st-key-detail_dne, na kterou se dá
+    # zacílit z rolovacího skriptu. Spolehlivější než id ve vlastním
+    # HTML — st.html obsah sanitizuje.
+    with st.container(border=True, key="detail_dne"):
         st.markdown(f"**{day.strftime('%d.%m.%Y')}**")
 
         if view == VIEW_ADMIN:
-            _admin_detail(day, morning, afternoon)
+            _admin_detail(day, reservations)
             return
 
         st.markdown(f"**do 11:00** — {half_text(morning, view)}")
@@ -578,6 +765,8 @@ def render():
 
     if view == VIEW_GUEST:
         _selection_bar(prices)
+    else:
+        _clash_banner(reservations)
 
     visible = _months_visible()
 
@@ -606,6 +795,8 @@ def render():
         st.rerun()
 
     _day_detail(reservations, view)
+
+    _scroll_to_detail()
 
     # Přehled obsazenosti je jen ke koukání — rezervovat se v něm
     # nedá, od toho je pohled hosta. Rychlé délky pobytu i formulář

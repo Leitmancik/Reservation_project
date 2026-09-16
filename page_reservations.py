@@ -59,7 +59,7 @@ def _status_badge(status):
     )
 
 
-def _render_row(res, reservations):
+def _render_row(res, reservations, key_prefix=""):
     # Na jeden termín může být víc poptávek — nepotvrzené se navzájem
     # neblokují. Majitel to potřebuje vidět: je to důvod urgovat toho,
     # kdo si termín zamluvil první.
@@ -105,7 +105,7 @@ def _render_row(res, reservations):
             if res["status"] == storage.STATUS_PENDING:
                 if st.button(
                     "Potvrdit",
-                    key=f"confirm_{res['id']}",
+                    key=f"{key_prefix}confirm_{res['id']}",
                     type="primary",
                     width="stretch",
                 ):
@@ -150,7 +150,7 @@ def _render_row(res, reservations):
             else:
                 if st.button(
                     "Vrátit zpět",
-                    key=f"revert_{res['id']}",
+                    key=f"{key_prefix}revert_{res['id']}",
                     width="stretch",
                 ):
                     with st.spinner("Vracím zpět…"):
@@ -174,7 +174,7 @@ def _render_row(res, reservations):
 
                 if st.button(
                     "Ano, smazat",
-                    key=f"delete_{res['id']}",
+                    key=f"{key_prefix}delete_{res['id']}",
                     type="primary",
                     width="stretch",
                 ):
@@ -191,6 +191,45 @@ def _render_row(res, reservations):
                         "byla smazána.",
                     )
                     st.rerun()
+
+
+def _focused_reservation(reservations):
+    """Vytáhne nahoru rezervaci, na kterou se přišlo z kalendáře.
+
+    Bez tohohle by přepnutí stránky skončilo u seznamu, ve kterém se
+    hledaná rezervace ztratí mezi ostatními — a smysl mělo právě to,
+    že na ni člověk rovnou uvidí.
+    """
+    hledane = st.session_state.get("focus_reservation")
+
+    if not hledane:
+        return
+
+    res = next(
+        (r for r in reservations if str(r["id"]) == str(hledane)), None
+    )
+
+    if res is None:
+        # Rezervace mezitím zmizela, typicky smazáním.
+        st.session_state.pop("focus_reservation", None)
+        return
+
+    col_nadpis, col_zavrit = st.columns([4, 1])
+
+    with col_nadpis:
+        st.subheader("Otevřená rezervace")
+
+    with col_zavrit:
+        if st.button("Zavřít", key="focus_close", width="stretch"):
+            st.session_state.pop("focus_reservation", None)
+            st.rerun()
+
+    # Tatáž rezervace se vykreslí i v seznamu níž, takže její tlačítka
+    # potřebují jiné klíče — Streamlit dva widgety se stejným klíčem
+    # nepřipustí.
+    _render_row(res, reservations, key_prefix="focus_")
+
+    st.divider()
 
 
 def render():
@@ -222,6 +261,8 @@ def render():
     earned = sum(
         r["price"] for r in confirmed if r.get("price") is not None
     )
+
+    _focused_reservation(reservations)
 
     st.html(METRICS_CSS)
 

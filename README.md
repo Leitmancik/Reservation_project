@@ -51,6 +51,11 @@ Plně obsazené dny nejdou kliknout. Dny, kde je volná jen jedna půlka,
 kliknout jdou — takový den totiž může posloužit jako odjezd jednoho
 hosta a zároveň příjezd dalšího.
 
+## Pro vývojáře
+
+Technický přehled projektu — architektura, konvence, rozhodnutí a známé
+problémy — je v [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md).
+
 ## Struktura souborů
 
 | Soubor | K čemu je |
